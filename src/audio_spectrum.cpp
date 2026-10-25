@@ -10,9 +10,23 @@ namespace {
 constexpr uint16_t FFT_SIZE = 256;
 constexpr uint8_t AUDIO_BLOCK_COUNT = 3;
 constexpr uint8_t SPECTRUM_BANDS = 8;
+#if defined(BOARD_JC3248W535)
+constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 100;
+constexpr uint8_t SPECTRUM_EASING_STEP = 8;
+#else
 constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 250;
+constexpr uint8_t SPECTRUM_EASING_STEP = 3;
+#endif
 constexpr uint32_t AUDIO_STALE_MS = 300;
+#if defined(BOARD_JC3248W535)
+constexpr int16_t SPECTRUM_BASELINE = 312;
+constexpr int16_t SPECTRUM_TOP = 265;
+constexpr int16_t SPECTRUM_HEIGHT = 55;
+#else
 constexpr int16_t SPECTRUM_BASELINE = 238;
+constexpr int16_t SPECTRUM_TOP = 195;
+constexpr int16_t SPECTRUM_HEIGHT = 45;
+#endif
 constexpr int16_t SPECTRUM_MAX_HEIGHT = 32;
 constexpr float TILT_DB_PER_OCTAVE = 4.5f;
 
@@ -197,12 +211,17 @@ void audio_process_i2s(uint32_t *sample, bool *continueI2S) {
 // Analyze pending audio blocks and draw the spectrum with per-frame bar easing.
 void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
                        bool streamActive, bool enabled) {
-  frameBuffer.fillRect(0, 195, FAT_CAT_PANEL_WIDTH, 45, 0x0841);
+  frameBuffer.fillRect(0, SPECTRUM_TOP, FAT_CAT_PANEL_WIDTH, SPECTRUM_HEIGHT,
+                       0x0841);
   frameBuffer.setTextDatum(MC_DATUM);
   frameBuffer.setTextColor(TFT_CYAN, 0x0841);
 
   if (!enabled) {
+#if defined(BOARD_JC3248W535)
+    frameBuffer.drawString("SPECTRUM OFF", FAT_CAT_PANEL_WIDTH / 2, 292, 1);
+#else
     frameBuffer.drawString("SPECTRUM OFF", FAT_CAT_PANEL_WIDTH / 2, 218, 1);
+#endif
     return;
   }
 
@@ -231,11 +250,12 @@ void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
     const uint8_t target = targetHeights[band];
     displayedHeights[band] =
         target > displayedHeights[band]
-            ? min<uint8_t>(target, displayedHeights[band] + 3)
+            ? min<uint8_t>(target,
+                           displayedHeights[band] + SPECTRUM_EASING_STEP)
             : max<uint8_t>(target,
-                           displayedHeights[band] > 3
-                               ? displayedHeights[band] - 3
-                               : 0);
+                           displayedHeights[band] > SPECTRUM_EASING_STEP
+                               ? displayedHeights[band] - SPECTRUM_EASING_STEP
+                               : target);
 
     const uint8_t height = displayedHeights[band];
     if (height > 0) {

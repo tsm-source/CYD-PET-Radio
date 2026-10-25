@@ -1,0 +1,29 @@
+{
+  "name": "CYD PET Radio - JC3248W535C_I_Y",
+  "version": "latest",
+  "new_install_prompt_erase": true,
+  "new_install_improv_wait_time": 0,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "firmware/jc3248w535/bootloader.bin",
+          "offset": 4096
+        },
+        {
+          "path": "firmware/jc3248w535/partitions.bin",
+          "offset": 32768
+        },
+        {
+          "path": "firmware/jc3248w535/boot_app0.bin",
+          "offset": 57344
+        },
+        {
+          "path": "firmware/jc3248w535/firmware.bin",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}

@@ -2,9 +2,13 @@
 #include <cstring>
 #include <Preferences.h>
 #include <SPI.h>
-#include <TFT_eSPI.h>
+#include "radio_display.h"
 #include <time.h>
+#if defined(BOARD_JC3248W535)
+#include <Wire.h>
+#else
 #include <XPT2046_Touchscreen.h>
+#endif
 #include <WiFi.h>
 #include <Audio.h>
 #include <esp_heap_caps.h>
@@ -23,19 +27,55 @@
 
 namespace {
 
+#if defined(BOARD_JC3248W535)
+constexpr int16_t DISPLAY_WIDTH = 480;
+constexpr int16_t DISPLAY_HEIGHT = 320;
+#else
 constexpr int16_t DISPLAY_WIDTH = 320;
 constexpr int16_t DISPLAY_HEIGHT = 240;
+#endif
 constexpr uint8_t TOUCH_CALIBRATION_TARGET_COUNT = 5;
+#if defined(BOARD_JC3248W535)
+constexpr int16_t TOUCH_CALIBRATION_X[TOUCH_CALIBRATION_TARGET_COUNT] = {
+    48, 432, 432, 48, 240};
+constexpr int16_t TOUCH_CALIBRATION_Y[TOUCH_CALIBRATION_TARGET_COUNT] = {
+    36, 36, 284, 284, 160};
+constexpr uint8_t TOUCH_CALIBRATION_VERSION = 2;
+#else
 constexpr int16_t TOUCH_CALIBRATION_X[TOUCH_CALIBRATION_TARGET_COUNT] = {
     48, 271, 271, 48, DISPLAY_WIDTH / 2};
 constexpr int16_t TOUCH_CALIBRATION_Y[TOUCH_CALIBRATION_TARGET_COUNT] = {
     36, 36, 203, 203, DISPLAY_HEIGHT / 2};
 constexpr uint8_t TOUCH_CALIBRATION_VERSION = 1;
+#endif
 constexpr int16_t CAT_PANEL_WIDTH = FAT_CAT_PANEL_WIDTH;
 constexpr int16_t PET_HEADER_HEIGHT = 32;
 constexpr int16_t PET_ANIMATION_HEIGHT = 195 - PET_HEADER_HEIGHT;
+#if defined(BOARD_JC3248W535)
+constexpr int16_t HOME_UI_LEFT = 132;
+constexpr int16_t HOME_UI_WIDTH = 336;
+constexpr int16_t HOME_BOTTOM_BUTTON_Y = 268;
+constexpr int16_t HOME_BOTTOM_BUTTON_WIDTH = 160;
+constexpr int16_t HOME_BOTTOM_BUTTON_HEIGHT = 42;
+constexpr int16_t HOME_PREVIOUS_X = 0;
+constexpr int16_t HOME_PREVIOUS_WIDTH = 70;
+constexpr int16_t HOME_PLAY_X = 76;
+constexpr int16_t HOME_PLAY_WIDTH = 176;
+constexpr int16_t HOME_NEXT_X = 258;
+constexpr int16_t HOME_NEXT_WIDTH = 70;
+constexpr int16_t HOME_PLAYBACK_Y = 153;
+constexpr int16_t HOME_PLAYBACK_HEIGHT = 46;
+constexpr int16_t HOME_VOLUME_LABEL_Y = 214;
+constexpr int16_t HOME_VOLUME_SLIDER_Y = 241;
+#else
 constexpr int16_t HOME_UI_LEFT = 103;
 constexpr int16_t HOME_UI_WIDTH = 210;
+constexpr int16_t HOME_BOTTOM_BUTTON_Y = 198;
+constexpr int16_t HOME_BOTTOM_BUTTON_WIDTH = 100;
+constexpr int16_t HOME_BOTTOM_BUTTON_HEIGHT = 32;
+#endif
+constexpr int16_t HOME_BOTTOM_BUTTON_GAP =
+    HOME_UI_WIDTH - 2 * HOME_BOTTOM_BUTTON_WIDTH;
 constexpr int16_t MENU_UI_LEFT = 12;
 constexpr int16_t MENU_UI_WIDTH = DISPLAY_WIDTH - 2 * MENU_UI_LEFT;
 #if defined(BOARD_FREENOVE_FNK0114L)
@@ -50,6 +90,8 @@ constexpr char BUILD_PROFILE_NAME[] = "esp32dev-ili9341-low-memory";
 #else
 constexpr char BUILD_PROFILE_NAME[] = "esp32dev-ili9341";
 #endif
+#elif defined(BOARD_JC3248W535)
+constexpr char BUILD_PROFILE_NAME[] = "jc3248w535";
 #elif defined(CYD_LOW_MEMORY_DIRECT_RENDER)
 constexpr char BUILD_PROFILE_NAME[] = "esp32dev-fast-low-memory";
 #elif defined(SPI_FREQUENCY) && SPI_FREQUENCY >= 80000000
@@ -57,14 +99,32 @@ constexpr char BUILD_PROFILE_NAME[] = "esp32dev-fast";
 #else
 constexpr char BUILD_PROFILE_NAME[] = "esp32dev";
 #endif
-#if defined(BOARD_FREENOVE_FNK0114L)
+#if defined(BOARD_JC3248W535)
+constexpr int16_t SETTINGS_ITEM_HEIGHT = 48;
+constexpr int16_t SETTINGS_ITEM_GAP = 12;
+constexpr int16_t SETTINGS_ITEM_START_Y = 42;
+#elif defined(BOARD_FREENOVE_FNK0114L)
 constexpr int16_t SETTINGS_ITEM_HEIGHT = 32;
 constexpr int16_t SETTINGS_ITEM_GAP = 6;
+constexpr int16_t SETTINGS_ITEM_START_Y = 39;
 #else
 constexpr int16_t SETTINGS_ITEM_HEIGHT = 40;
 constexpr int16_t SETTINGS_ITEM_GAP = 8;
-#endif
 constexpr int16_t SETTINGS_ITEM_START_Y = 39;
+#endif
+#if defined(BOARD_JC3248W535)
+constexpr int16_t AUDIO_TOGGLE_START_Y = 42;
+constexpr int16_t AUDIO_TOGGLE_STEP = 50;
+constexpr int16_t AUDIO_TOGGLE_HEIGHT = 44;
+constexpr int16_t AUDIO_VOLUME_LABEL_Y = 204;
+constexpr int16_t AUDIO_VOLUME_TRACK_Y = 232;
+#else
+constexpr int16_t AUDIO_TOGGLE_START_Y = 37;
+constexpr int16_t AUDIO_TOGGLE_STEP = 32;
+constexpr int16_t AUDIO_TOGGLE_HEIGHT = 29;
+constexpr int16_t AUDIO_VOLUME_LABEL_Y = 194;
+constexpr int16_t AUDIO_VOLUME_TRACK_Y = 220;
+#endif
 constexpr uint8_t MAX_STATIONS = 20;
 constexpr uint8_t STATIONS_PER_PAGE = 4;
 constexpr uint8_t STATION_NAME_SIZE = 32;
@@ -74,6 +134,7 @@ constexpr uint16_t TOUCH_DEBOUNCE_MS = 180;
 constexpr uint32_t WIFI_TIMEOUT_MS = 25000;
 constexpr uint32_t WIFI_RECONNECT_DELAY_MS = 30000;
 constexpr int AUDIO_INPUT_BUFFER_BYTES = 20000;
+constexpr int AUDIO_PSRAM_BUFFER_BYTES = 300000;
 constexpr uint32_t STREAM_RETRY_DELAY_MS = 3000;
 constexpr uint16_t CLOCK_UPDATE_INTERVAL_MS = 60000;
 constexpr uint16_t BITRATE_UPDATE_INTERVAL_MS = 1000;
@@ -196,11 +257,24 @@ int16_t UI_WIDTH = HOME_UI_WIDTH;
 int16_t themeSwatchWidth = HOME_THEME_SWATCH_WIDTH;
 int16_t themeSwatchHeight = HOME_THEME_SWATCH_HEIGHT;
 int16_t themeSwatchGap = HOME_THEME_SWATCH_GAP;
+#if !defined(BOARD_JC3248W535)
 SPIClass touchSPI(HSPI);
 XPT2046_Touchscreen touch(33, 36);
+#else
+constexpr uint8_t TOUCH_SDA_PIN = 4;
+constexpr uint8_t TOUCH_SCL_PIN = 8;
+constexpr uint8_t TOUCH_RESET_PIN = 12;
+constexpr uint8_t TOUCH_ADDRESS = 0x3B;
+uint16_t lastTouchRawX = 0;
+uint16_t lastTouchRawY = 0;
+#endif
 Preferences preferences;
 // DAC channel 2 is GPIO 26, the CYD speaker output.
+#if defined(BOARD_JC3248W535)
+Audio radioAudio;
+#else
 Audio radioAudio(true, I2S_DAC_CHANNEL_LEFT_EN);
+#endif
 
 Station stations[MAX_STATIONS]{};
 uint8_t stationCount = 0;
@@ -278,6 +352,13 @@ uint32_t wifiConnectStartedAt = 0;
 uint32_t streamRestartAt = 0;
 uint32_t lastTouchAt = 0;
 uint32_t lastCatFrameAt = 0;
+#if defined(BOARD_JC3248W535)
+uint32_t lastAnimationStatsAt = 0;
+uint32_t animationRenderTimeUs = 0;
+uint32_t animationFlushTimeUs = 0;
+uint16_t animationFrameCount = 0;
+uint16_t animationFlushCount = 0;
+#endif
 uint32_t petTransitionStartedAt = 0;
 uint32_t nextDanceChangeAt = 0;
 uint32_t lastClockUpdateAt = 0;
@@ -645,7 +726,13 @@ void drawTimerActionButton(const char *label) {
   renderTarget->drawRoundRect(8, 158, 80, 27, 6, 0x4208);
   renderTarget->setTextDatum(MC_DATUM);
   renderTarget->setTextColor(TFT_WHITE, BUTTON_COLORS[buttonColorIndex]);
+#if defined(BOARD_JC3248W535)
+  renderTarget->setTextSize(1);
   renderTarget->drawString(label, 48, 172, 2);
+  renderTarget->setTextSize(1);
+#else
+  renderTarget->drawString(label, 48, 172, 2);
+#endif
 }
 
 // Render timer controls, or replace the panel with the pulsing expiry screen.
@@ -655,13 +742,26 @@ void drawTimerPanel(uint32_t now) {
     const uint16_t pulse = phase < 600 ? phase : 1200 - phase;
     const uint8_t green = 48 + pulse * 176 / 600;
     const uint16_t orange = renderTarget->color565(255, green, 0);
-    renderTarget->fillRect(0, 0, DISPLAY_WIDTH / 2, DISPLAY_HEIGHT, orange);
+    renderTarget->fillRect(0, 0,
+#if defined(BOARD_JC3248W535)
+                           CAT_PANEL_WIDTH,
+#else
+                           DISPLAY_WIDTH / 2,
+#endif
+                           DISPLAY_HEIGHT, orange);
     renderTarget->setTextDatum(MC_DATUM);
     renderTarget->setTextColor(TFT_WHITE, orange);
+#if defined(BOARD_JC3248W535)
+    renderTarget->setTextSize(1);
+    renderTarget->drawString("Time", CAT_PANEL_WIDTH / 2, 110, 2);
+    renderTarget->drawString("is", CAT_PANEL_WIDTH / 2, 155, 2);
+    renderTarget->drawString("up", CAT_PANEL_WIDTH / 2, 200, 2);
+#else
     renderTarget->setTextSize(3);
     renderTarget->drawString("Time", DISPLAY_WIDTH / 4, 72, 2);
     renderTarget->drawString("is", DISPLAY_WIDTH / 4, 120, 2);
     renderTarget->drawString("up", DISPLAY_WIDTH / 4, 168, 2);
+#endif
     renderTarget->setTextSize(1);
     return;
   }
@@ -696,16 +796,26 @@ void drawTimerPanel(uint32_t now) {
     char seconds[3];
     snprintf(seconds, sizeof(seconds), "%02lu",
              static_cast<unsigned long>(remainingSeconds));
+#if defined(BOARD_JC3248W535)
+    renderTarget->setTextSize(1);
+    renderTarget->drawString(seconds, 48, 91, 3);
+#else
     renderTarget->setTextSize(3);
     renderTarget->drawString(seconds, 48, 91, 2);
+#endif
     renderTarget->setTextSize(1);
   } else {
     char countdown[6];
     snprintf(countdown, sizeof(countdown), "%02lu:%02lu",
              static_cast<unsigned long>(remainingSeconds / 60),
              static_cast<unsigned long>(remainingSeconds % 60));
+#if defined(BOARD_JC3248W535)
+    renderTarget->setTextSize(1);
+    renderTarget->drawString(countdown, 48, 91, 2);
+#else
     renderTarget->setTextSize(2);
     renderTarget->drawString(countdown, 48, 91, 2);
+#endif
     renderTarget->setTextSize(1);
   }
 
@@ -897,11 +1007,51 @@ int16_t keyboardKeyGap() {
 }
 
 int16_t keyboardKeyHeight() {
+#if defined(BOARD_JC3248W535)
+  return 42;
+#else
   return wideKeyboardLayout() ? 34 : 25;
+#endif
 }
 
 int16_t keyboardRowY(uint8_t row) {
+#if defined(BOARD_JC3248W535)
+  return 61 + row * 46;
+#else
   return wideKeyboardLayout() ? 65 + row * 37 : 66 + row * 29;
+#endif
+}
+
+int16_t keyboardControlY() {
+#if defined(BOARD_JC3248W535)
+  return 203;
+#else
+  return wideKeyboardLayout() ? 177 : 156;
+#endif
+}
+
+int16_t keyboardControlHeight() {
+#if defined(BOARD_JC3248W535)
+  return 36;
+#else
+  return wideKeyboardLayout() ? 28 : 24;
+#endif
+}
+
+int16_t keyboardActionY() {
+#if defined(BOARD_JC3248W535)
+  return 249;
+#else
+  return wideKeyboardLayout() ? 211 : 192;
+#endif
+}
+
+int16_t keyboardActionHeight() {
+#if defined(BOARD_JC3248W535)
+  return 46;
+#else
+  return wideKeyboardLayout() ? 25 : 31;
+#endif
 }
 
 int16_t keyboardKeyWidth(const String &keys) {
@@ -1017,17 +1167,24 @@ void drawButton(int16_t x, int16_t y, int16_t width, int16_t height,
 
 void drawPanelHeader(const String &title) {
   TFT_eSPI &display = *renderTarget;
+#if defined(BOARD_JC3248W535)
+  const int16_t screenWidth = jc3248w535::DISPLAY_WIDTH;
+  const int16_t screenHeight = jc3248w535::DISPLAY_HEIGHT;
+#else
+  const int16_t screenWidth = DISPLAY_WIDTH;
+  const int16_t screenHeight = DISPLAY_HEIGHT;
+#endif
   const int16_t panelLeft =
       currentScreen == Screen::Home ? CAT_PANEL_WIDTH : 0;
-  display.fillRect(panelLeft, 0, DISPLAY_WIDTH - panelLeft,
-                   DISPLAY_HEIGHT, backgroundColor);
+  display.fillRect(panelLeft, 0, screenWidth - panelLeft, screenHeight,
+                   backgroundColor);
   display.setTextDatum(TL_DATUM);
   display.setTextColor(TFT_CYAN, backgroundColor);
   display.drawString(title, UI_LEFT, 9, 2);
   const int16_t lineLeft =
       currentScreen == Screen::Home ? CAT_PANEL_WIDTH : UI_LEFT;
   const int16_t lineWidth =
-      currentScreen == Screen::Home ? DISPLAY_WIDTH - CAT_PANEL_WIDTH
+      currentScreen == Screen::Home ? screenWidth - CAT_PANEL_WIDTH
                                     : UI_WIDTH;
   display.drawFastHLine(lineLeft, 31, lineWidth, 0x4208);
 }
@@ -1074,6 +1231,30 @@ void drawHome() {
   drawPanelHeader("PET RADIO");
   drawHomeTop(0, 0);
   drawHomeMetadata(0, 0);
+#if defined(BOARD_JC3248W535)
+  drawButton(UI_LEFT + HOME_PREVIOUS_X, HOME_PLAYBACK_Y, HOME_PREVIOUS_WIDTH,
+             HOME_PLAYBACK_HEIGHT, "|<", PANEL_LIGHT, TFT_WHITE, 2);
+  drawButton(UI_LEFT + HOME_PLAY_X, HOME_PLAYBACK_Y, HOME_PLAY_WIDTH,
+             HOME_PLAYBACK_HEIGHT, streamActive ? "PAUSE" : "PLAY",
+             PANEL_LIGHT, TFT_WHITE, 2);
+  drawButton(UI_LEFT + HOME_NEXT_X, HOME_PLAYBACK_Y, HOME_NEXT_WIDTH,
+             HOME_PLAYBACK_HEIGHT, ">|", PANEL_LIGHT, TFT_WHITE, 2);
+
+  display.setTextDatum(TL_DATUM);
+  display.setTextColor(primaryTextColor(), backgroundColor);
+  display.drawString("VOLUME", UI_LEFT, HOME_VOLUME_LABEL_Y, 2);
+  display.setTextDatum(TR_DATUM);
+  display.drawString(String(volume * 100 / 21) + "%",
+                     UI_LEFT + UI_WIDTH, HOME_VOLUME_LABEL_Y, 2);
+  display.fillRoundRect(UI_LEFT, HOME_VOLUME_SLIDER_Y, UI_WIDTH, 12, 6,
+                        BUTTON_COLORS[buttonColorIndex]);
+  const int16_t sliderWidth =
+      static_cast<int16_t>((UI_WIDTH - 8) * volume / 21);
+  display.fillRoundRect(UI_LEFT + 4, HOME_VOLUME_SLIDER_Y + 3, sliderWidth, 6,
+                        3, ACCENT);
+  display.fillCircle(UI_LEFT + 4 + sliderWidth, HOME_VOLUME_SLIDER_Y + 6, 9,
+                     TFT_WHITE);
+#else
   drawButton(UI_LEFT, 105, 49, 36, "|<", PANEL_LIGHT);
   drawButton(UI_LEFT + 55, 105, 100, 36,
              streamActive ? "PAUSE" : "PLAY", PANEL_LIGHT);
@@ -1091,9 +1272,13 @@ void drawHome() {
       static_cast<int16_t>((UI_WIDTH - 4) * volume / 21);
   display.fillRoundRect(UI_LEFT + 2, 170, sliderWidth, 4, 2, ACCENT);
   display.fillCircle(UI_LEFT + 2 + sliderWidth, 172, 6, TFT_WHITE);
+#endif
 
-  drawButton(UI_LEFT, 190, 99, 36, "STATIONS", PANEL_LIGHT);
-  drawButton(UI_LEFT + 105, 190, 105, 36, "MENU", PANEL_LIGHT);
+  drawButton(UI_LEFT, HOME_BOTTOM_BUTTON_Y, HOME_BOTTOM_BUTTON_WIDTH,
+             HOME_BOTTOM_BUTTON_HEIGHT, "TIMER", PANEL_LIGHT);
+  drawButton(UI_LEFT + HOME_BOTTOM_BUTTON_WIDTH + HOME_BOTTOM_BUTTON_GAP,
+             HOME_BOTTOM_BUTTON_Y, HOME_BOTTOM_BUTTON_WIDTH,
+             HOME_BOTTOM_BUTTON_HEIGHT, "MENU", PANEL_LIGHT);
 }
 
 void drawHomeTop(int16_t originX, int16_t originY) {
@@ -1107,16 +1292,22 @@ void drawHomeTop(int16_t originX, int16_t originY) {
   }
   display.setTextDatum(TR_DATUM);
   display.setTextColor(primaryTextColor(), backgroundColor);
+#if defined(BOARD_JC3248W535)
+  display.drawString(clockText, UI_LEFT + UI_WIDTH, 4, 2);
+#else
   display.drawString(clockText, UI_LEFT + UI_WIDTH - originX,
                      2 - originY, 1);
-  drawButton(UI_LEFT + UI_WIDTH - 48 - originX, 14 - originY, 48, 16,
-             "TIMER", PANEL_LIGHT, TFT_WHITE, 1);
+#endif
 }
 
 void drawHomeMetadata(int16_t originX, int16_t originY) {
   TFT_eSPI &display = *renderTarget;
   const int16_t left = UI_LEFT - originX;
+#if defined(BOARD_JC3248W535)
+  const int16_t top = 40 - originY;
+#else
   const int16_t top = 36 - originY;
+#endif
   const bool connected = WiFi.status() == WL_CONNECTED;
   const int codecId =
       connected && streamActive ? radioAudio.getCodec() : 0;
@@ -1135,8 +1326,13 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
       stationCount == 0 ? "No stations" : stations[selectedStation].name;
   const String fittedStationName =
       fittedText(stationName, UI_WIDTH - 14, 2);
+#if defined(BOARD_JC3248W535)
+  drawHomeTextField(displayedHomeStation, fittedStationName, left + 8,
+                    top + 4, TL_DATUM, 2, primaryTextColor());
+#else
   drawHomeTextField(displayedHomeStation, fittedStationName, left + 7,
                     top + 3, TL_DATUM, 2, primaryTextColor());
+#endif
   displayedHomeStation = fittedStationName;
   String subtitle = streamTitle.isEmpty()
                         ? (streamStation.isEmpty() ? statusMessage
@@ -1144,6 +1340,16 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
                         : streamTitle;
   const TwoLineText titleLines =
       wrappedText(subtitle, UI_WIDTH - 14, 2);
+#if defined(BOARD_JC3248W535)
+  drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 8,
+                    top + 29, TL_DATUM, 2, TEXT_MUTED);
+  displayedHomeTitleFirst = titleLines.first;
+  drawHomeTextField(displayedHomeTitleSecond, titleLines.second, left + 8,
+                    top + 51, TL_DATUM, 2, TEXT_MUTED);
+  displayedHomeTitleSecond = titleLines.second;
+  drawHomeTextField(displayedHomeCodec, codecName, left + 8, top + 77,
+                    TL_DATUM, 1, TEXT_MUTED);
+#else
   drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 7,
                     top + 22, TL_DATUM, 2, TEXT_MUTED);
   displayedHomeTitleFirst = titleLines.first;
@@ -1152,6 +1358,7 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
   displayedHomeTitleSecond = titleLines.second;
   drawHomeTextField(displayedHomeCodec, codecName, left + 7, top + 55,
                     TL_DATUM, 1, TEXT_MUTED);
+#endif
   displayedHomeCodec = codecName;
   const String bitrateText =
       bitrateKbps == 0 ? "-- kbit/s" : String(bitrateKbps) + " kbit/s";
@@ -1160,9 +1367,15 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
 
 void drawHomeBitrate(const String &bitrateText, int16_t originX,
                      int16_t originY) {
+#if defined(BOARD_JC3248W535)
+  drawHomeTextField(displayedHomeBitrate, bitrateText,
+                    UI_LEFT + UI_WIDTH - 8 - originX, 140 - originY,
+                    TR_DATUM, 1, TEXT_MUTED);
+#else
   drawHomeTextField(displayedHomeBitrate, bitrateText,
                     UI_LEFT + UI_WIDTH - 7 - originX, 91 - originY,
                     TR_DATUM, 1, TEXT_MUTED);
+#endif
   displayedHomeBitrate = bitrateText;
 }
 
@@ -1259,6 +1472,14 @@ void drawAudioSettings() {
   TFT_eSPI &display = *renderTarget;
   drawPanelHeader("AUDIO");
   drawMenuBackButton();
+#if defined(BOARD_JC3248W535)
+  const String labels[] = {
+      String("AUDIO BOOST +6 dB: ") + (audioBoost ? "ON" : "OFF"),
+      String("SPECTRUM: ") + (audioSpectrumEnabled ? "ON" : "OFF"),
+      String("DYNAMIC COMPRESSION: ") +
+          (audioCompressorEnabled ? "ON" : "OFF")};
+  constexpr uint8_t TOGGLE_COUNT = 3;
+#else
   const String labels[] = {
       String("AUDIO BOOST +6 dB: ") + (audioBoost ? "ON" : "OFF"),
       String("SPECTRUM: ") + (audioSpectrumEnabled ? "ON" : "OFF"),
@@ -1266,25 +1487,27 @@ void drawAudioSettings() {
           (audioCompressorEnabled ? "ON" : "OFF"),
       String("GPIO4 AMP: ") + (audioAmpEnabled ? "ON" : "OFF"),
       String("NOISE SHAPING: ") + (audioNoiseShaping ? "ON" : "OFF")};
-  constexpr int16_t TOGGLE_START_Y = 37;
-  constexpr int16_t TOGGLE_STEP = 32;
-  constexpr int16_t TOGGLE_HEIGHT = 29;
-  for (uint8_t row = 0; row < 5; ++row) {
-    drawButton(UI_LEFT, TOGGLE_START_Y + row * TOGGLE_STEP, UI_WIDTH,
-               TOGGLE_HEIGHT, labels[row], PANEL_LIGHT, TFT_WHITE, 2, false);
+  constexpr uint8_t TOGGLE_COUNT = 5;
+#endif
+  for (uint8_t row = 0; row < TOGGLE_COUNT; ++row) {
+    drawButton(UI_LEFT, AUDIO_TOGGLE_START_Y + row * AUDIO_TOGGLE_STEP,
+               UI_WIDTH, AUDIO_TOGGLE_HEIGHT, labels[row], PANEL_LIGHT,
+               TFT_WHITE, 2, false);
   }
   display.setTextDatum(TL_DATUM);
   display.setTextColor(TEXT_MUTED, backgroundColor);
-  display.drawString("VOLUME", UI_LEFT, 194, 2);
+  display.drawString("VOLUME", UI_LEFT, AUDIO_VOLUME_LABEL_Y, 2);
   display.setTextDatum(TR_DATUM);
   display.drawString(String(volume * 100 / 21) + "%", UI_LEFT + UI_WIDTH,
-                     194, 2);
-  display.fillRoundRect(UI_LEFT, 220, UI_WIDTH, 10, 5,
+                     AUDIO_VOLUME_LABEL_Y, 2);
+  display.fillRoundRect(UI_LEFT, AUDIO_VOLUME_TRACK_Y, UI_WIDTH, 10, 5,
                         BUTTON_COLORS[buttonColorIndex]);
   const int16_t sliderWidth =
       static_cast<int16_t>((UI_WIDTH - 4) * volume / 21);
-  display.fillRoundRect(UI_LEFT + 2, 222, sliderWidth, 6, 3, ACCENT);
-  display.fillCircle(UI_LEFT + 2 + sliderWidth, 225, 8, TFT_WHITE);
+  display.fillRoundRect(UI_LEFT + 2, AUDIO_VOLUME_TRACK_Y + 2, sliderWidth, 6, 3,
+                        ACCENT);
+  display.fillCircle(UI_LEFT + 2 + sliderWidth, AUDIO_VOLUME_TRACK_Y + 5, 8,
+                     TFT_WHITE);
 }
 
 // Draw larger color targets and a dedicated touchscreen calibration action.
@@ -1294,11 +1517,19 @@ void drawDisplaySettings() {
   drawMenuBackButton();
   display.setTextDatum(TL_DATUM);
   display.setTextColor(primaryTextColor(), backgroundColor);
+#if defined(BOARD_JC3248W535)
+  display.drawString("BACKGROUND", UI_LEFT, 38, 2);
+  constexpr int16_t BACKGROUND_SWATCH_Y = 62;
+  constexpr int16_t BUTTON_SWATCH_Y = 162;
+  constexpr int16_t SWATCH_HEIGHT = 28;
+  constexpr int16_t SWATCH_ROW_STEP = 34;
+#else
   display.drawString("BACKGROUND", UI_LEFT, 35, 2);
   constexpr int16_t BACKGROUND_SWATCH_Y = 53;
   constexpr int16_t BUTTON_SWATCH_Y = 128;
   constexpr int16_t SWATCH_HEIGHT = 24;
   constexpr int16_t SWATCH_ROW_STEP = 29;
+#endif
   for (uint8_t index = 0; index < THEME_COLOR_COUNT; ++index) {
     const int16_t swatchX = themeSwatchX(index % COLORS_PER_ROW);
     const int16_t swatchY =
@@ -1309,7 +1540,11 @@ void drawDisplaySettings() {
         swatchX - 1, swatchY - 1, themeSwatchWidth + 2, SWATCH_HEIGHT + 2, 5,
         index == themeColorIndex ? primaryTextColor() : 0x4208);
   }
+#if defined(BOARD_JC3248W535)
+  display.drawString("BUTTONS", UI_LEFT, 138, 2);
+#else
   display.drawString("BUTTONS", UI_LEFT, 110, 2);
+#endif
   for (uint8_t index = 0; index < BUTTON_COLOR_COUNT; ++index) {
     const int16_t swatchX = themeSwatchX(index % COLORS_PER_ROW);
     const int16_t swatchY =
@@ -1320,8 +1555,13 @@ void drawDisplaySettings() {
         swatchX - 1, swatchY - 1, themeSwatchWidth + 2, SWATCH_HEIGHT + 2, 5,
         index == buttonColorIndex ? primaryTextColor() : 0x4208);
   }
+#if defined(BOARD_JC3248W535)
+  drawButton(UI_LEFT, 258, UI_WIDTH, 48, "RECALIBRATE TOUCHSCREEN",
+             PANEL_LIGHT, TFT_WHITE, 2, false);
+#else
   drawButton(UI_LEFT, 194, UI_WIDTH, 36, "RECALIBRATE TOUCHSCREEN",
              PANEL_LIGHT, TFT_WHITE, 2, false);
+#endif
 }
 
 #if defined(BOARD_FREENOVE_FNK0114L)
@@ -1478,28 +1718,55 @@ void drawWifiSettings() {
   const int16_t labelLeft = UI_LEFT + 6;
   display.setTextDatum(TL_DATUM);
   display.setTextColor(TEXT_MUTED, backgroundColor);
-  display.drawString("NETWORK NAME (SSID)", labelLeft, 37, 2);
-  drawButton(UI_LEFT, 55, UI_WIDTH, 39,
+#if defined(BOARD_JC3248W535)
+  constexpr int16_t SSID_LABEL_Y = 40;
+  constexpr int16_t SSID_FIELD_Y = 62;
+  constexpr int16_t FIELD_HEIGHT = 48;
+  constexpr int16_t PASSWORD_LABEL_Y = 124;
+  constexpr int16_t PASSWORD_FIELD_Y = 146;
+  constexpr int16_t SHOW_PASSWORD_Y = 202;
+  constexpr int16_t CONNECT_Y = 254;
+  constexpr int16_t STATUS_Y = 308;
+#else
+  constexpr int16_t SSID_LABEL_Y = 37;
+  constexpr int16_t SSID_FIELD_Y = 55;
+  constexpr int16_t FIELD_HEIGHT = 39;
+  constexpr int16_t PASSWORD_LABEL_Y = 100;
+  constexpr int16_t PASSWORD_FIELD_Y = 118;
+  constexpr int16_t SHOW_PASSWORD_Y = 157;
+  constexpr int16_t CONNECT_Y = 198;
+  constexpr int16_t STATUS_Y = 231;
+#endif
+  display.drawString("NETWORK NAME (SSID)", labelLeft, SSID_LABEL_Y, 2);
+  drawButton(UI_LEFT, SSID_FIELD_Y, UI_WIDTH, FIELD_HEIGHT,
              fittedText(wifiSsid.isEmpty() ? "(Enter SSID)" : wifiSsid,
                         UI_WIDTH - 16, 2),
              PANEL, TFT_WHITE, 2, false);
   display.setTextDatum(TL_DATUM);
   display.setTextColor(TEXT_MUTED, backgroundColor);
-  display.drawString("PASSWORD", labelLeft, 100, 2);
+  display.drawString("PASSWORD", labelLeft, PASSWORD_LABEL_Y, 2);
   String passwordPreview = passwordForDisplay(wifiPassword);
   if (wifiPassword.isEmpty()) {
     passwordPreview = "(Enter password)";
   }
-  drawButton(UI_LEFT, 118, UI_WIDTH, 39,
+  drawButton(UI_LEFT, PASSWORD_FIELD_Y, UI_WIDTH, FIELD_HEIGHT,
              fittedText(passwordPreview, UI_WIDTH - 16, 2), PANEL, TFT_WHITE,
              2, false);
 
-  drawButton(UI_LEFT, 157, UI_WIDTH, 34,
+#if defined(BOARD_JC3248W535)
+  drawButton(UI_LEFT, SHOW_PASSWORD_Y, UI_WIDTH, 44,
+#else
+  drawButton(UI_LEFT, SHOW_PASSWORD_Y, UI_WIDTH, 34,
+#endif
              String("SHOW PASSWORD: ") + (showWifiPassword ? "ON" : "OFF"),
              showWifiPassword ? 0x2147 : PANEL, TFT_WHITE, 2, false);
-  drawButton(UI_LEFT, 198, UI_WIDTH, 32, "CONNECT",
+#if defined(BOARD_JC3248W535)
+  drawButton(UI_LEFT, CONNECT_Y, UI_WIDTH, 44, "CONNECT",
+#else
+  drawButton(UI_LEFT, CONNECT_Y, UI_WIDTH, 32, "CONNECT",
+#endif
              wifiConnecting ? 0x3186 : ACCENT, TFT_WHITE, 2, false);
-  drawText(fittedText(wifiStatusText(), UI_WIDTH, 1), UI_LEFT, 231, 1,
+  drawText(fittedText(wifiStatusText(), UI_WIDTH, 1), UI_LEFT, STATUS_Y, 1,
            WiFi.status() == WL_CONNECTED ? SUCCESS : TEXT_MUTED);
 }
 
@@ -1512,6 +1779,59 @@ void drawStations() {
   const uint8_t pageStart = stationListPage * STATIONS_PER_PAGE;
   const uint8_t visibleStations =
       min<uint8_t>(STATIONS_PER_PAGE, stationCount - pageStart);
+#if defined(BOARD_JC3248W535)
+  constexpr int16_t ROW_START_Y = 50;
+  constexpr int16_t ROW_STEP = 49;
+  constexpr int16_t ROW_HEIGHT = 43;
+  constexpr int16_t NAME_WIDTH = 260;
+  constexpr int16_t EDIT_X = 268;
+  constexpr int16_t EDIT_WIDTH = 80;
+  constexpr int16_t DELETE_X = 356;
+  constexpr int16_t DELETE_WIDTH = 100;
+  constexpr int16_t PAGER_Y = 263;
+  constexpr int16_t PAGER_HEIGHT = 42;
+  drawText(String(stationCount) + " STATIONS", UI_LEFT, 35, 1, TEXT_MUTED);
+  if (deleteConfirmation) {
+    display.fillRoundRect(UI_LEFT + 24, 100, UI_WIDTH - 48, 148, 10,
+                          PANEL_LIGHT);
+    display.drawRoundRect(UI_LEFT + 24, 100, UI_WIDTH - 48, 148, 10,
+                          TFT_CYAN);
+    display.setTextDatum(MC_DATUM);
+    display.setTextColor(primaryTextColor(), PANEL_LIGHT);
+    display.drawString("Delete station?", DISPLAY_WIDTH / 2, 122, 2);
+    display.drawString(fittedText(stations[deleteIndex].name, UI_WIDTH - 72, 2),
+                       DISPLAY_WIDTH / 2, 152, 2);
+    const int16_t actionWidth = (UI_WIDTH - 32) / 2;
+    drawButton(UI_LEFT + 8, 184, actionWidth, 48, "CANCEL", PANEL,
+               TFT_WHITE, 2, false);
+    drawButton(UI_LEFT + 24 + actionWidth, 184, actionWidth, 48, "DELETE",
+               ERROR_COLOUR, TFT_WHITE, 2, false);
+    return;
+  }
+
+  for (uint8_t row = 0; row < visibleStations; ++row) {
+    const uint8_t index = pageStart + row;
+    const int16_t rowY = ROW_START_Y + row * ROW_STEP;
+    const uint16_t fill = index == selectedStation ? 0x2147 : PANEL;
+    drawButton(UI_LEFT, rowY, NAME_WIDTH, ROW_HEIGHT,
+               fittedText(stations[index].name, NAME_WIDTH - 12, 2), fill,
+               TFT_WHITE, 2, false);
+    drawButton(UI_LEFT + EDIT_X, rowY, EDIT_WIDTH, ROW_HEIGHT, "EDIT",
+               PANEL_LIGHT, TFT_WHITE, 2, false);
+    drawButton(UI_LEFT + DELETE_X, rowY, DELETE_WIDTH, ROW_HEIGHT, "DELETE",
+               ERROR_COLOUR, TFT_WHITE, 2, false);
+  }
+  drawButton(UI_LEFT, PAGER_Y, 60, PAGER_HEIGHT, "<", PANEL_LIGHT,
+             TFT_WHITE, 2, false);
+  drawButton(UI_LEFT + 70, PAGER_Y, 60, PAGER_HEIGHT, ">", PANEL_LIGHT,
+             TFT_WHITE, 2, false);
+  display.setTextDatum(MC_DATUM);
+  display.setTextColor(primaryTextColor(), backgroundColor);
+  display.drawString(String(stationListPage + 1) + "/" + String(pageCount),
+                     UI_LEFT + 225, PAGER_Y + PAGER_HEIGHT / 2, 2);
+  drawButton(UI_LEFT + 300, PAGER_Y, UI_WIDTH - 300, PAGER_HEIGHT, "+ ADD",
+             ACCENT, TFT_WHITE, 2, false);
+#else
   drawText(String(stationCount) + " STATIONS", UI_LEFT, 34, 1, TEXT_MUTED);
   if (deleteConfirmation) {
     for (uint8_t row = 0; row < visibleStations; ++row) {
@@ -1561,6 +1881,7 @@ void drawStations() {
                      UI_LEFT + 125, 215, 2);
   drawButton(UI_LEFT + 164, 197, 132, 36, "+ ADD", ACCENT,
              TFT_WHITE, 2, false);
+#endif
 }
 
 // Draw editable station fields and save/back actions.
@@ -1569,21 +1890,48 @@ void drawStationEditor() {
   drawPanelHeader(stationEditorIsNew ? "NEW STATION" : "EDIT STATION");
   display.setTextDatum(TL_DATUM);
   display.setTextColor(TEXT_MUTED, backgroundColor);
-  display.drawString("NAME", UI_LEFT, 39, 2);
-  drawButton(UI_LEFT, 57, UI_WIDTH, 39,
+#if defined(BOARD_JC3248W535)
+  constexpr int16_t NAME_LABEL_Y = 42;
+  constexpr int16_t NAME_FIELD_Y = 64;
+  constexpr int16_t NAME_FIELD_HEIGHT = 48;
+  constexpr int16_t URL_LABEL_Y = 126;
+  constexpr int16_t URL_FIELD_Y = 148;
+  constexpr int16_t URL_FIELD_HEIGHT = 48;
+  constexpr int16_t ACTION_Y = 220;
+  constexpr int16_t ACTION_HEIGHT = 48;
+  constexpr int16_t HINT_Y = 280;
+#else
+  constexpr int16_t NAME_LABEL_Y = 39;
+  constexpr int16_t NAME_FIELD_Y = 57;
+  constexpr int16_t NAME_FIELD_HEIGHT = 39;
+  constexpr int16_t URL_LABEL_Y = 104;
+  constexpr int16_t URL_FIELD_Y = 122;
+  constexpr int16_t URL_FIELD_HEIGHT = 39;
+  constexpr int16_t ACTION_Y = 181;
+  constexpr int16_t ACTION_HEIGHT = 40;
+  constexpr int16_t HINT_Y = 225;
+#endif
+  display.drawString("NAME", UI_LEFT, NAME_LABEL_Y, 2);
+  drawButton(UI_LEFT, NAME_FIELD_Y, UI_WIDTH, NAME_FIELD_HEIGHT,
              fittedText(editName, UI_WIDTH - 14, 2), PANEL, TFT_WHITE, 2,
              false);
   display.setTextColor(TEXT_MUTED, backgroundColor);
-  display.drawString("STREAM URL", UI_LEFT, 104, 2);
-  drawButton(UI_LEFT, 122, UI_WIDTH, 39,
+  display.drawString("STREAM URL", UI_LEFT, URL_LABEL_Y, 2);
+  drawButton(UI_LEFT, URL_FIELD_Y, UI_WIDTH, URL_FIELD_HEIGHT,
              fittedText(editUrl, UI_WIDTH - 14, 2), PANEL, TFT_WHITE, 2,
              false);
   const int16_t actionWidth = (UI_WIDTH - 8) / 2;
-  drawButton(UI_LEFT, 181, actionWidth, 40, "SAVE", ACCENT, TFT_WHITE, 2,
-             false);
-  drawButton(UI_LEFT + actionWidth + 8, 181, actionWidth, 40, "BACK",
+#if defined(BOARD_JC3248W535)
+  drawButton(UI_LEFT, ACTION_Y, actionWidth, ACTION_HEIGHT, "SAVE", ACCENT,
+             TFT_WHITE, 2, false);
+#else
+  drawButton(UI_LEFT, ACTION_Y, actionWidth, ACTION_HEIGHT, "SAVE", ACCENT,
+             TFT_WHITE, 2, false);
+#endif
+  drawButton(UI_LEFT + actionWidth + 8, ACTION_Y, actionWidth, ACTION_HEIGHT,
+             "BACK",
              PANEL_LIGHT, TFT_WHITE, 2, false);
-  drawText("MP3/AAC stream (HTTP/HTTPS)", UI_LEFT, 225, 1, TEXT_MUTED);
+  drawText("MP3/AAC stream (HTTP/HTTPS)", UI_LEFT, HINT_Y, 1, TEXT_MUTED);
 }
 
 // Draw the adaptive on-screen keyboard for credentials and station fields.
@@ -1633,8 +1981,8 @@ void drawKeyboard() {
     }
   }
 
-  const int16_t controlY = wideKeyboardLayout() ? 177 : 156;
-  const int16_t controlHeight = wideKeyboardLayout() ? 28 : 24;
+  const int16_t controlY = keyboardControlY();
+  const int16_t controlHeight = keyboardControlHeight();
   int16_t controlX = 0;
   int16_t controlWidth = 0;
   keyboardControlBounds(0, controlX, controlWidth);
@@ -1652,20 +2000,28 @@ void drawKeyboard() {
   keyboardControlBounds(3, controlX, controlWidth);
   drawButton(controlX, controlY, controlWidth, controlHeight, "<-",
              PANEL_LIGHT, TFT_WHITE, 2, false);
-  const int16_t actionY = wideKeyboardLayout() ? 211 : 192;
-  const int16_t actionHeight = wideKeyboardLayout() ? 25 : 31;
+  const int16_t actionY = keyboardActionY();
+  const int16_t actionHeight = keyboardActionHeight();
   const int16_t actionWidth = wideKeyboardLayout() ? (UI_WIDTH - 8) / 2 : 98;
   constexpr int16_t actionGap = 8;
+#if defined(BOARD_JC3248W535)
+  constexpr uint8_t ACTION_FONT = 2;
+#else
+  constexpr uint8_t ACTION_FONT = 1;
+#endif
   drawButton(UI_LEFT, actionY, actionWidth, actionHeight, "CANCEL",
-             PANEL_LIGHT, TFT_WHITE, 1, false);
+             PANEL_LIGHT, TFT_WHITE, ACTION_FONT, false);
   drawButton(UI_LEFT + actionWidth + actionGap, actionY,
              wideKeyboardLayout() ? actionWidth : 104, actionHeight, "DONE",
-             ACCENT, TFT_WHITE, 1, false);
+             ACCENT, TFT_WHITE, ACTION_FONT, false);
 }
 
 // Render the current screen into the sprite and then refresh the display.
 void renderScreen() {
   updateScreenLayout();
+#if defined(BOARD_JC3248W535)
+  display.setNativeCoordinates(true);
+#endif
   renderTarget = displayFramebufferReady
                      ? static_cast<TFT_eSPI *>(&screenFrameBuffer)
                      : &display;
@@ -1678,9 +2034,15 @@ void renderScreen() {
     display.fillScreen(backgroundColor);
   }
   if (currentScreen == Screen::Home) {
+#if defined(BOARD_JC3248W535)
+    renderTarget->setViewport(CAT_PANEL_WIDTH, 0,
+                              jc3248w535::DISPLAY_WIDTH - CAT_PANEL_WIDTH,
+                              jc3248w535::DISPLAY_HEIGHT, false);
+#else
     renderTarget->setViewport(CAT_PANEL_WIDTH, 0,
                               DISPLAY_WIDTH - CAT_PANEL_WIDTH,
                               DISPLAY_HEIGHT, false);
+#endif
   }
   switch (currentScreen) {
     case Screen::Home:
@@ -1765,12 +2127,22 @@ bool fitTouchCalibration(const uint16_t *rawX, const uint16_t *rawY,
 
   fit.xRawX = (yy * xTargetX - xy * yTargetX) / determinant;
   fit.xRawY = (xx * yTargetX - xy * xTargetX) / determinant;
+#if defined(BOARD_JC3248W535)
+  fit.xOffset = jc3248w535::DISPLAY_WIDTH / 2.0 -
+                fit.xRawX * meanX - fit.xRawY * meanY;
+#else
   fit.xOffset = DISPLAY_WIDTH / 2.0 -
                 fit.xRawX * meanX - fit.xRawY * meanY;
+#endif
   fit.yRawX = (yy * xTargetY - xy * yTargetY) / determinant;
   fit.yRawY = (xx * yTargetY - xy * xTargetY) / determinant;
+#if defined(BOARD_JC3248W535)
+  fit.yOffset = jc3248w535::DISPLAY_HEIGHT / 2.0 -
+                fit.yRawX * meanX - fit.yRawY * meanY;
+#else
   fit.yOffset = DISPLAY_HEIGHT / 2.0 -
                 fit.yRawX * meanX - fit.yRawY * meanY;
+#endif
   fit.valid = isfinite(fit.xRawX) && isfinite(fit.xRawY) &&
               isfinite(fit.xOffset) && isfinite(fit.yRawX) &&
               isfinite(fit.yRawY) && isfinite(fit.yOffset);
@@ -1789,6 +2161,9 @@ bool isTouchCalibrationValid(const TouchCalibration &calibration) {
 
 // Draw one calibration target and wait for the user to touch its center.
 void drawCalibrationTarget(uint8_t index) {
+#if defined(BOARD_JC3248W535)
+  display.setNativeCoordinates(true);
+#endif
   display.fillScreen(backgroundColor);
   display.setTextDatum(TL_DATUM);
   display.setTextColor(primaryTextColor(), backgroundColor);
@@ -1803,10 +2178,40 @@ void drawCalibrationTarget(uint8_t index) {
   display.drawCircle(targetX, targetY, 13, TFT_CYAN);
   display.drawFastHLine(targetX - 18, targetY, 37, TFT_CYAN);
   display.drawFastVLine(targetX, targetY - 18, 37, TFT_CYAN);
+#if defined(BOARD_JC3248W535)
+  display.flushFrame();
+#endif
 }
 
 bool touchscreenTouched() {
-#if defined(BOARD_FREENOVE_FNK0114L)
+#if defined(BOARD_JC3248W535)
+  uint8_t data[8]{};
+  const uint8_t readCommand[11] = {
+      0xB5, 0xAB, 0xA5, 0x5A, 0x00, 0x00, 0x00, sizeof(data), 0x00, 0x00,
+      0x00};
+  Wire.beginTransmission(TOUCH_ADDRESS);
+  Wire.write(readCommand, sizeof(readCommand));
+  if (Wire.endTransmission() != 0 ||
+      Wire.requestFrom(TOUCH_ADDRESS, sizeof(data)) != sizeof(data)) {
+    return false;
+  }
+  for (uint8_t &byte : data) {
+    byte = Wire.read();
+  }
+  if (data[1] == 0 || data[1] > 1) {
+    return false;
+  }
+  const uint16_t rawX =
+      (static_cast<uint16_t>(data[2] & 0x0F) << 8) | data[3];
+  const uint16_t rawY =
+      (static_cast<uint16_t>(data[4] & 0x0F) << 8) | data[5];
+  if (rawX > 500 || rawY > 500) {
+    return false;
+  }
+  lastTouchRawX = rawY;
+  lastTouchRawY = 320 - rawX;
+  return true;
+#elif defined(BOARD_FREENOVE_FNK0114L)
   return display.getTouchRawZ() > 350;
 #else
   return touch.touched();
@@ -1814,7 +2219,10 @@ bool touchscreenTouched() {
 }
 
 void readRawTouch(uint16_t &x, uint16_t &y) {
-#if defined(BOARD_FREENOVE_FNK0114L)
+#if defined(BOARD_JC3248W535)
+  x = lastTouchRawX;
+  y = lastTouchRawY;
+#elif defined(BOARD_FREENOVE_FNK0114L)
   display.getTouchRaw(&x, &y);
 #else
   const TS_Point point = touch.getPoint();
@@ -1890,8 +2298,17 @@ void calibrateTouchscreen() {
 
     display.fillScreen(TFT_RED);
     display.setTextColor(TFT_WHITE, TFT_RED);
+#if defined(BOARD_JC3248W535)
+    display.drawCentreString("Calibration failed",
+                             jc3248w535::DISPLAY_WIDTH / 2,
+                             jc3248w535::DISPLAY_HEIGHT / 2, 2);
+#else
     display.drawCentreString("Calibration failed", DISPLAY_WIDTH / 2,
                              DISPLAY_HEIGHT / 2, 2);
+#endif
+#if defined(BOARD_JC3248W535)
+    display.flushFrame();
+#endif
     Serial.println("ERROR: touchscreen calibration range is invalid.");
     delay(1500);
   }
@@ -1924,6 +2341,9 @@ void calibrateTouchscreen() {
     touchCalibration.valid = true;
 #endif
   }
+#if defined(BOARD_JC3248W535)
+  display.setNativeCoordinates(currentScreen == Screen::Home);
+#endif
 }
 
 bool readTouchPoint(int16_t &x, int16_t &y) {
@@ -1952,6 +2372,50 @@ bool readTouchPoint(int16_t &x, int16_t &y) {
                         freenoveTouchCalibration.yRawY * rawY +
                         freenoveTouchCalibration.yOffset),
                 0, display.height() - 1);
+  return true;
+#elif defined(BOARD_JC3248W535)
+  if (!touchscreenTouched()) {
+    touchHeld = false;
+    return false;
+  }
+  if (touchHeld) {
+    return false;
+  }
+  touchHeld = true;
+
+  const uint32_t now = millis();
+  if (now - lastTouchAt < TOUCH_DEBOUNCE_MS) {
+    return false;
+  }
+  lastTouchAt = now;
+  uint32_t sumX = 0;
+  uint32_t sumY = 0;
+  uint8_t samples = 0;
+  for (uint8_t i = 0; i < 3; ++i) {
+    uint16_t rawX = 0;
+    uint16_t rawY = 0;
+    readRawTouch(rawX, rawY);
+    sumX += rawX;
+    sumY += rawY;
+    ++samples;
+    delayMicroseconds(1200);
+    if (!touchscreenTouched()) {
+      break;
+    }
+  }
+  if (samples == 0) {
+    return false;
+  }
+  const float rawX = sumX / static_cast<float>(samples);
+  const float rawY = sumY / static_cast<float>(samples);
+  const int32_t mappedX = lroundf(touchCalibration.xRawX * rawX +
+                                  touchCalibration.xRawY * rawY +
+                                  touchCalibration.xOffset);
+  const int32_t mappedY = lroundf(touchCalibration.yRawX * rawX +
+                                  touchCalibration.yRawY * rawY +
+                                  touchCalibration.yOffset);
+  x = constrain(mappedX, 0, jc3248w535::DISPLAY_WIDTH - 1);
+  y = constrain(mappedY, 0, jc3248w535::DISPLAY_HEIGHT - 1);
   return true;
 #else
   if (!touchscreenTouched()) {
@@ -2378,8 +2842,10 @@ void setAudioNoiseShaping(bool enabled) {
 // Control the optional active-low amplifier enable on compatible CYD boards.
 void setAudioAmpEnabled(bool enabled) {
   audioAmpEnabled = enabled;
+#if !defined(BOARD_JC3248W535)
   digitalWrite(AUDIO_AMP_ENABLE_PIN, enabled ? LOW : HIGH);
   pinMode(AUDIO_AMP_ENABLE_PIN, OUTPUT);
+#endif
   if (preferences.putBool("amp4", audioAmpEnabled) == 0) {
     Serial.println("ERROR: could not save GPIO 4 amplifier setting.");
     setStatus("Could not save GPIO 4 setting");
@@ -2712,8 +3178,8 @@ void handleKeyboardTouch(int16_t x, int16_t y) {
     }
   }
 
-  const int16_t controlY = wideKeyboardLayout() ? 177 : 156;
-  const int16_t controlHeight = wideKeyboardLayout() ? 28 : 24;
+  const int16_t controlY = keyboardControlY();
+  const int16_t controlHeight = keyboardControlHeight();
   int16_t controlX = 0;
   int16_t controlWidth = 0;
   keyboardControlBounds(0, controlX, controlWidth);
@@ -2743,8 +3209,8 @@ void handleKeyboardTouch(int16_t x, int16_t y) {
     }
   }
 
-  const int16_t actionY = wideKeyboardLayout() ? 211 : 192;
-  const int16_t actionHeight = wideKeyboardLayout() ? 25 : 31;
+  const int16_t actionY = keyboardActionY();
+  const int16_t actionHeight = keyboardActionHeight();
   const int16_t actionWidth = wideKeyboardLayout() ? (UI_WIDTH - 8) / 2 : 98;
   const int16_t actionGap = 8;
   if (pointInRect(x, y, UI_LEFT, actionY, actionWidth, actionHeight)) {
@@ -2840,15 +3306,57 @@ void deleteStation(uint8_t index) {
 
 // Convert the slider's horizontal touch coordinate into the 0-21 volume scale.
 void adjustVolumeFromTouch(int16_t x) {
+#if defined(BOARD_JC3248W535)
+  const int16_t relativeX = constrain(x - UI_LEFT - 4, 0, UI_WIDTH - 8);
+  const uint8_t newVolume =
+      static_cast<uint8_t>((relativeX * 21 + (UI_WIDTH - 8) / 2) /
+                           (UI_WIDTH - 8));
+#else
   const int16_t relativeX = constrain(x - UI_LEFT - 2, 0, UI_WIDTH - 4);
   const uint8_t newVolume =
       static_cast<uint8_t>((relativeX * 21 + (UI_WIDTH - 4) / 2) /
                            (UI_WIDTH - 4));
+#endif
   setVolume(newVolume);
 }
 
 // Handle playback navigation and controls on the home screen.
 void handleHomeTouch(int16_t x, int16_t y) {
+#if defined(BOARD_JC3248W535)
+  if (pointInRect(x, y, UI_LEFT + HOME_PREVIOUS_X, HOME_PLAYBACK_Y,
+                  HOME_PREVIOUS_WIDTH, HOME_PLAYBACK_HEIGHT)) {
+    if (stationCount > 0) {
+      selectStation((selectedStation + stationCount - 1) % stationCount);
+    }
+  } else if (pointInRect(x, y, UI_LEFT + HOME_PLAY_X, HOME_PLAYBACK_Y,
+                         HOME_PLAY_WIDTH, HOME_PLAYBACK_HEIGHT)) {
+    if (streamActive) {
+      radioAudio.stopSong();
+      streamActive = false;
+      setStatus("Paused");
+    } else {
+      startStream();
+    }
+  } else if (pointInRect(x, y, UI_LEFT + HOME_NEXT_X, HOME_PLAYBACK_Y,
+                         HOME_NEXT_WIDTH, HOME_PLAYBACK_HEIGHT)) {
+    if (stationCount > 0) {
+      selectStation((selectedStation + 1) % stationCount);
+    }
+  } else if (pointInRect(x, y, UI_LEFT - 1, HOME_VOLUME_SLIDER_Y - 8,
+                         UI_WIDTH + 2, 28)) {
+    adjustVolumeFromTouch(x);
+  } else if (pointInRect(x, y, UI_LEFT, HOME_BOTTOM_BUTTON_Y,
+                         HOME_BOTTOM_BUTTON_WIDTH,
+                         HOME_BOTTOM_BUTTON_HEIGHT)) {
+    pressTimerButton(millis());
+  } else if (pointInRect(x, y,
+                         UI_LEFT + HOME_BOTTOM_BUTTON_WIDTH +
+                             HOME_BOTTOM_BUTTON_GAP,
+                         HOME_BOTTOM_BUTTON_Y, HOME_BOTTOM_BUTTON_WIDTH,
+                         HOME_BOTTOM_BUTTON_HEIGHT)) {
+    currentScreen = Screen::Settings;
+  }
+#else
   if (pointInRect(x, y, UI_LEFT, 105, 49, 36)) {
     if (stationCount > 0) {
       selectStation((selectedStation + stationCount - 1) % stationCount);
@@ -2867,18 +3375,97 @@ void handleHomeTouch(int16_t x, int16_t y) {
     }
   } else if (pointInRect(x, y, UI_LEFT - 1, 163, UI_WIDTH + 2, 19)) {
     adjustVolumeFromTouch(x);
-  } else if (pointInRect(x, y, UI_LEFT, 190, 99, 36)) {
-    currentScreen = Screen::Stations;
-    deleteConfirmation = false;
-    stationListFromSettings = false;
-  } else if (pointInRect(x, y, UI_LEFT + 105, 190, 105, 36)) {
+  } else if (pointInRect(x, y, UI_LEFT, HOME_BOTTOM_BUTTON_Y,
+                         HOME_BOTTOM_BUTTON_WIDTH,
+                         HOME_BOTTOM_BUTTON_HEIGHT)) {
+    pressTimerButton(millis());
+  } else if (pointInRect(x, y,
+                         UI_LEFT + HOME_BOTTOM_BUTTON_WIDTH +
+                             HOME_BOTTOM_BUTTON_GAP,
+                         HOME_BOTTOM_BUTTON_Y, HOME_BOTTOM_BUTTON_WIDTH,
+                         HOME_BOTTOM_BUTTON_HEIGHT)) {
     currentScreen = Screen::Settings;
   }
+#endif
   markUiDirty();
 }
 
 // Handle station selection, paging, editing, deletion, and list navigation.
 void handleStationTouch(int16_t x, int16_t y) {
+#if defined(BOARD_JC3248W535)
+  constexpr int16_t ROW_START_Y = 50;
+  constexpr int16_t ROW_STEP = 49;
+  constexpr int16_t ROW_HEIGHT = 43;
+  constexpr int16_t NAME_WIDTH = 260;
+  constexpr int16_t EDIT_X = 268;
+  constexpr int16_t EDIT_WIDTH = 80;
+  constexpr int16_t DELETE_X = 356;
+  constexpr int16_t DELETE_WIDTH = 100;
+  constexpr int16_t PAGER_Y = 263;
+  constexpr int16_t PAGER_HEIGHT = 42;
+  if (deleteConfirmation) {
+    const int16_t actionWidth = (UI_WIDTH - 32) / 2;
+    if (pointInRect(x, y, UI_LEFT + 8, 184, actionWidth, 48)) {
+      deleteConfirmation = false;
+    } else if (pointInRect(x, y, UI_LEFT + 24 + actionWidth, 184,
+                           actionWidth, 48)) {
+      deleteStation(deleteIndex);
+    }
+    markUiDirty();
+    return;
+  }
+
+  const uint8_t pageStart = stationListPage * STATIONS_PER_PAGE;
+  const uint8_t visibleStations =
+      min<uint8_t>(STATIONS_PER_PAGE, stationCount - pageStart);
+  if (pointOnMenuBackButton(x, y)) {
+    currentScreen = stationListFromSettings ? Screen::Settings : Screen::Home;
+  } else {
+    bool rowHandled = false;
+    for (uint8_t row = 0; row < visibleStations; ++row) {
+      const int16_t rowY = ROW_START_Y + row * ROW_STEP;
+      if (!pointInRect(x, y, UI_LEFT, rowY, UI_WIDTH, ROW_HEIGHT)) {
+        continue;
+      }
+      rowHandled = true;
+      const uint8_t index = pageStart + row;
+      if (pointInRect(x, y, UI_LEFT + DELETE_X, rowY, DELETE_WIDTH,
+                      ROW_HEIGHT)) {
+        deleteIndex = index;
+        deleteConfirmation = true;
+      } else if (pointInRect(x, y, UI_LEFT + EDIT_X, rowY, EDIT_WIDTH,
+                             ROW_HEIGHT)) {
+        startStationEditor(false, index);
+        return;
+      } else if (pointInRect(x, y, UI_LEFT, rowY, NAME_WIDTH, ROW_HEIGHT)) {
+        selectStation(index);
+        return;
+      }
+      break;
+    }
+    if (!rowHandled) {
+      if (pointInRect(x, y, UI_LEFT, PAGER_Y, 60, PAGER_HEIGHT)) {
+        if (stationListPage > 0) {
+          --stationListPage;
+        }
+      } else if (pointInRect(x, y, UI_LEFT + 70, PAGER_Y, 60,
+                             PAGER_HEIGHT)) {
+        if (stationListPage + 1 < stationPageCount()) {
+          ++stationListPage;
+        }
+      } else if (pointInRect(x, y, UI_LEFT + 300, PAGER_Y, UI_WIDTH - 300,
+                             PAGER_HEIGHT)) {
+        if (stationCount >= MAX_STATIONS) {
+          setStatus("Station list is full");
+        } else {
+          startStationEditor(true, stationCount);
+          return;
+        }
+      }
+    }
+  }
+  markUiDirty();
+#else
   if (deleteConfirmation) {
     if (pointInRect(x, y, UI_LEFT + 14, 136, 127, 28)) {
       deleteConfirmation = false;
@@ -2930,6 +3517,7 @@ void handleStationTouch(int16_t x, int16_t y) {
     }
   }
   markUiDirty();
+#endif
 }
 
 // Dispatch a calibrated touch to the active screen and its controls.
@@ -2938,19 +3526,39 @@ void handleTouch(int16_t x, int16_t y) {
   switch (currentScreen) {
     case Screen::Home:
       if (timerState == TimerState::Expired &&
-          pointInRect(x, y, 0, 0, DISPLAY_WIDTH / 2, DISPLAY_HEIGHT)) {
+          pointInRect(x, y, 0, 0,
+#if defined(BOARD_JC3248W535)
+                      CAT_PANEL_WIDTH, DISPLAY_HEIGHT
+#else
+                      DISPLAY_WIDTH / 2, DISPLAY_HEIGHT
+#endif
+                      )) {
         pressTimerButton(millis());
         return;
       }
-      if (pointInRect(x, y, 0, 195, CAT_PANEL_WIDTH, 45)) {
+      if (pointInRect(x, y, 0,
+#if defined(BOARD_JC3248W535)
+                      265, CAT_PANEL_WIDTH, 55
+#else
+                      195, CAT_PANEL_WIDTH, 45
+#endif
+                      )) {
         setAudioSpectrum(!audioSpectrumEnabled);
         return;
       }
-      if (pointInRect(x, y, UI_LEFT + UI_WIDTH - 48, 14, 48, 16)) {
+      if (pointInRect(x, y, UI_LEFT, HOME_BOTTOM_BUTTON_Y,
+                      HOME_BOTTOM_BUTTON_WIDTH,
+                      HOME_BOTTOM_BUTTON_HEIGHT)) {
         pressTimerButton(millis());
         return;
       }
-      if (pointInRect(x, y, 0, 0, CAT_PANEL_WIDTH, 195)) {
+      if (pointInRect(x, y, 0, 0, CAT_PANEL_WIDTH,
+#if defined(BOARD_JC3248W535)
+                      195
+#else
+                      195
+#endif
+                      )) {
         if (timerModeActive()) {
           handleTimerTouch(x, y, millis());
         } else {
@@ -3001,27 +3609,44 @@ void handleTouch(int16_t x, int16_t y) {
     case Screen::AudioSettings:
       if (pointOnMenuBackButton(x, y)) {
         currentScreen = Screen::Settings;
-      } else if (pointInRect(x, y, UI_LEFT, 37, UI_WIDTH, 29)) {
+      } else if (pointInRect(x, y, UI_LEFT, AUDIO_TOGGLE_START_Y, UI_WIDTH,
+                             AUDIO_TOGGLE_HEIGHT)) {
         setAudioBoost(!audioBoost);
-      } else if (pointInRect(x, y, UI_LEFT, 69, UI_WIDTH, 29)) {
+      } else if (pointInRect(x, y, UI_LEFT,
+                             AUDIO_TOGGLE_START_Y + AUDIO_TOGGLE_STEP,
+                             UI_WIDTH, AUDIO_TOGGLE_HEIGHT)) {
         setAudioSpectrum(!audioSpectrumEnabled);
-      } else if (pointInRect(x, y, UI_LEFT, 101, UI_WIDTH, 29)) {
+      } else if (pointInRect(x, y, UI_LEFT,
+                             AUDIO_TOGGLE_START_Y + 2 * AUDIO_TOGGLE_STEP,
+                             UI_WIDTH, AUDIO_TOGGLE_HEIGHT)) {
         setAudioCompressor(!audioCompressorEnabled);
+#if defined(BOARD_JC3248W535)
+      } else if (pointInRect(x, y, UI_LEFT, AUDIO_VOLUME_TRACK_Y - 8,
+                             UI_WIDTH, 30)) {
+        adjustVolumeFromTouch(x);
+#else
       } else if (pointInRect(x, y, UI_LEFT, 133, UI_WIDTH, 29)) {
         setAudioAmpEnabled(!audioAmpEnabled);
       } else if (pointInRect(x, y, UI_LEFT, 165, UI_WIDTH, 29)) {
         setAudioNoiseShaping(!audioNoiseShaping);
       } else if (pointInRect(x, y, UI_LEFT, 190, UI_WIDTH, 50)) {
         adjustVolumeFromTouch(x);
+#endif
       }
       markUiDirty();
       break;
     case Screen::DisplaySettings: {
       if (pointOnMenuBackButton(x, y)) {
         currentScreen = Screen::Settings;
+#if defined(BOARD_JC3248W535)
+      } else if (pointInRect(x, y, UI_LEFT, 60, UI_WIDTH, 72)) {
+        constexpr int16_t BACKGROUND_SWATCH_Y = 62;
+        constexpr int16_t SWATCH_ROW_STEP = 34;
+#else
       } else if (pointInRect(x, y, UI_LEFT, 51, UI_WIDTH, 56)) {
         constexpr int16_t BACKGROUND_SWATCH_Y = 53;
         constexpr int16_t SWATCH_ROW_STEP = 29;
+#endif
         for (uint8_t index = 0; index < THEME_COLOR_COUNT; ++index) {
           const int16_t swatchY =
               BACKGROUND_SWATCH_Y + (index / COLORS_PER_ROW) * SWATCH_ROW_STEP;
@@ -3031,9 +3656,15 @@ void handleTouch(int16_t x, int16_t y) {
             break;
           }
         }
+#if defined(BOARD_JC3248W535)
+      } else if (pointInRect(x, y, UI_LEFT, 160, UI_WIDTH, 72)) {
+        constexpr int16_t BUTTON_SWATCH_Y = 162;
+        constexpr int16_t SWATCH_ROW_STEP = 34;
+#else
       } else if (pointInRect(x, y, UI_LEFT, 126, UI_WIDTH, 57)) {
         constexpr int16_t BUTTON_SWATCH_Y = 128;
         constexpr int16_t SWATCH_ROW_STEP = 29;
+#endif
         for (uint8_t index = 0; index < BUTTON_COLOR_COUNT; ++index) {
           const int16_t swatchY =
               BUTTON_SWATCH_Y + (index / COLORS_PER_ROW) * SWATCH_ROW_STEP;
@@ -3043,7 +3674,11 @@ void handleTouch(int16_t x, int16_t y) {
             break;
           }
         }
+#if defined(BOARD_JC3248W535)
+      } else if (pointInRect(x, y, UI_LEFT, 258, UI_WIDTH, 48)) {
+#else
       } else if (pointInRect(x, y, UI_LEFT, 194, UI_WIDTH, 36)) {
+#endif
         calibrateTouchscreen();
       }
       markUiDirty();
@@ -3082,6 +3717,16 @@ void handleTouch(int16_t x, int16_t y) {
       if (pointOnMenuBackButton(x, y)) {
         currentScreen = Screen::Settings;
         markUiDirty();
+#if defined(BOARD_JC3248W535)
+      } else if (pointInRect(x, y, UI_LEFT, 62, UI_WIDTH, 48)) {
+        beginKeyboard(KeyboardTarget::Ssid);
+      } else if (pointInRect(x, y, UI_LEFT, 146, UI_WIDTH, 48)) {
+        beginKeyboard(KeyboardTarget::Password);
+      } else if (pointInRect(x, y, UI_LEFT, 202, UI_WIDTH, 44)) {
+        showWifiPassword = !showWifiPassword;
+        markUiDirty();
+      } else if (pointInRect(x, y, UI_LEFT, 254, UI_WIDTH, 44)) {
+#else
       } else if (pointInRect(x, y, UI_LEFT, 55, UI_WIDTH, 39)) {
         beginKeyboard(KeyboardTarget::Ssid);
       } else if (pointInRect(x, y, UI_LEFT, 118, UI_WIDTH, 39)) {
@@ -3090,6 +3735,7 @@ void handleTouch(int16_t x, int16_t y) {
         showWifiPassword = !showWifiPassword;
         markUiDirty();
       } else if (pointInRect(x, y, UI_LEFT, 198, UI_WIDTH, 32)) {
+#endif
         if (saveWifiCredentials()) {
           beginWifiConnection();
         }
@@ -3099,6 +3745,19 @@ void handleTouch(int16_t x, int16_t y) {
       handleStationTouch(x, y);
       break;
     case Screen::StationEditor:
+#if defined(BOARD_JC3248W535)
+      if (pointInRect(x, y, UI_LEFT, 64, UI_WIDTH, 48)) {
+        beginKeyboard(KeyboardTarget::StationName);
+      } else if (pointInRect(x, y, UI_LEFT, 148, UI_WIDTH, 48)) {
+        beginKeyboard(KeyboardTarget::StationUrl);
+      } else if (pointInRect(x, y, UI_LEFT, 220, (UI_WIDTH - 8) / 2, 48)) {
+        saveStationEditor();
+      } else if (pointInRect(x, y, UI_LEFT + (UI_WIDTH - 8) / 2 + 8, 220,
+                             (UI_WIDTH - 8) / 2, 48)) {
+        currentScreen = Screen::Stations;
+        markUiDirty();
+      }
+#else
       if (pointInRect(x, y, UI_LEFT, 57, UI_WIDTH, 39)) {
         beginKeyboard(KeyboardTarget::StationName);
       } else if (pointInRect(x, y, UI_LEFT, 122, UI_WIDTH, 39)) {
@@ -3110,6 +3769,7 @@ void handleTouch(int16_t x, int16_t y) {
         currentScreen = Screen::Stations;
         markUiDirty();
       }
+#endif
       break;
     case Screen::Keyboard:
       handleKeyboardTouch(x, y);
@@ -3155,7 +3815,11 @@ void audio_eof_stream(const char *info) {
 // Initialize hardware, restore settings, calibrate touch, and start networking.
 void setup() {
   Serial.begin(115200);
-#if defined(BOARD_FREENOVE_FNK0114L)
+#if defined(BOARD_JC3248W535)
+  Serial.printf("Booting CYD PET Radio for JC3248W535C_I_Y. Display: "
+                "AXS15231B QSPI; profile: %s.\n",
+                BUILD_PROFILE_NAME);
+#elif defined(BOARD_FREENOVE_FNK0114L)
   Serial.printf("Booting CYD PET Radio for Freenove FNK0114L. Display: %s; "
                 "profile: %s.\n",
                 USER_SETUP_INFO, BUILD_PROFILE_NAME);
@@ -3163,9 +3827,21 @@ void setup() {
   Serial.printf("Booting CYD PET Radio for CYD. Display: %s; profile: %s.\n",
                 USER_SETUP_INFO, BUILD_PROFILE_NAME);
 #endif
+#if defined(BOARD_JC3248W535)
+  if (!display.init()) {
+    Serial.println("ERROR: JC3248W535 display initialization failed.");
+    while (true) {
+      delay(1000);
+    }
+  }
+#else
   display.init();
+#endif
   display.setRotation(1);
   display.fillScreen(TFT_BLACK);
+#if defined(BOARD_JC3248W535)
+  display.flushFrame();
+#endif
 #if !defined(CYD_LOW_MEMORY_DIRECT_RENDER)
   screenFrameBuffer.setColorDepth(8);
   if (!screenFrameBuffer.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT)) {
@@ -3182,6 +3858,8 @@ void setup() {
     }
   }
   displayFramebufferReady = true;
+#elif defined(BOARD_JC3248W535)
+  Serial.println("Display uses native 480x320 coordinates on every screen.");
 #else
   petPanelFrameBuffer.setColorDepth(8);
   petPanelFramebufferReady =
@@ -3207,7 +3885,16 @@ void setup() {
   }
 #endif
 
-#if !defined(BOARD_FREENOVE_FNK0114L)
+#if defined(BOARD_JC3248W535)
+  Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+  Wire.setClock(400000);
+  pinMode(TOUCH_RESET_PIN, OUTPUT);
+  digitalWrite(TOUCH_RESET_PIN, LOW);
+  delay(20);
+  digitalWrite(TOUCH_RESET_PIN, HIGH);
+  delay(200);
+  Serial.println("AXS15231B capacitive touchscreen initialized over I2C.");
+#elif !defined(BOARD_FREENOVE_FNK0114L)
   touchSPI.begin(25, 39, 32, 33);
   if (!touch.begin(touchSPI)) {
     Serial.println("ERROR: XPT2046 touch controller initialization failed.");
@@ -3223,14 +3910,21 @@ void setup() {
   Serial.println("Boot: preferences opened.");
   volume = min<uint8_t>(preferences.getUChar("volume", 10), 21);
   audioBoost = preferences.getBool("boost", false);
+#if !defined(BOARD_JC3248W535)
   audioAmpEnabled = preferences.getBool("amp4", false);
+#endif
   audioSpectrumEnabled = preferences.getBool("spectrum", true);
   audioCompressorEnabled = preferences.getBool("compressor", false);
   setAudioCompressorEnabled(audioCompressorEnabled);
+#if defined(BOARD_JC3248W535)
+  audioNoiseShaping = false;
+  setAudioNoiseShapingEnabled(false);
+#else
   audioNoiseShaping = preferences.getBool("noiseshape", false);
   setAudioNoiseShapingEnabled(audioNoiseShaping);
   digitalWrite(AUDIO_AMP_ENABLE_PIN, audioAmpEnabled ? LOW : HIGH);
   pinMode(AUDIO_AMP_ENABLE_PIN, OUTPUT);
+#endif
   themeColorIndex = min<uint8_t>(
       preferences.getUChar("theme", DEFAULT_THEME_COLOR),
       THEME_COLOR_COUNT - 1);
@@ -3303,8 +3997,18 @@ void setup() {
 
   // Without PSRAM the library defaults to ~6 KB, which underruns whenever the
   // display refresh delays radioAudio.loop().
+#if defined(BOARD_JC3248W535)
+  radioAudio.setBufsize(AUDIO_INPUT_BUFFER_BYTES, AUDIO_PSRAM_BUFFER_BYTES);
+#else
   radioAudio.setBufsize(AUDIO_INPUT_BUFFER_BYTES, 0);
+#endif
   radioAudio.forceMono(true);
+#if defined(BOARD_JC3248W535)
+  if (!radioAudio.setPinout(42, 2, 41)) {
+    Serial.println("ERROR: could not configure the board's I2S audio output.");
+    setStatus("I2S audio output unavailable");
+  }
+#endif
   const int8_t audioGain = audioBoost ? AUDIO_BOOST_DB : 0;
   radioAudio.setTone(audioGain, audioGain, audioGain);
   radioAudio.setVolume(volume);
@@ -3405,7 +4109,14 @@ void loop() {
         if (homeClockDirty) {
           refreshHomeClock();
         }
+#if defined(BOARD_JC3248W535)
+        const uint32_t renderStartedAt = micros();
+#endif
         drawCatFrame(now);
+#if defined(BOARD_JC3248W535)
+        animationRenderTimeUs += micros() - renderStartedAt;
+        ++animationFrameCount;
+#endif
       }
     } else if (uiDirty) {
       renderScreen();
@@ -3420,6 +4131,52 @@ void loop() {
       }
     }
 #if defined(DIAGNOSTIC_NO_DISPLAY_DURING_AUDIO)
+  }
+#endif
+#if defined(BOARD_JC3248W535)
+  const uint32_t flushStartedAt = micros();
+  display.flushFrame([]() { radioAudio.loop(); });
+  const uint32_t flushDurationUs = micros() - flushStartedAt;
+  if (flushDurationUs >= 500) {
+    animationFlushTimeUs += flushDurationUs;
+    ++animationFlushCount;
+  }
+  const uint32_t statsNow = millis();
+  if (currentScreen == Screen::Home) {
+    if (lastAnimationStatsAt == 0) {
+      lastAnimationStatsAt = statsNow;
+    } else if (statsNow - lastAnimationStatsAt >= 5000) {
+      const uint32_t elapsedMs = statsNow - lastAnimationStatsAt;
+      const uint32_t framesPerSecond =
+          static_cast<uint32_t>(animationFrameCount) * 1000 / elapsedMs;
+      const uint32_t averageRenderMs =
+          animationFrameCount == 0
+              ? 0
+              : animationRenderTimeUs / animationFrameCount / 1000;
+      const uint32_t averageFlushMs =
+          animationFlushCount == 0
+              ? 0
+              : animationFlushTimeUs / animationFlushCount / 1000;
+      Serial.printf(
+          "Animation: %lu fps; render avg %lu ms; display flush avg %lu ms; "
+          "audio %s; spectrum %s.\n",
+          static_cast<unsigned long>(framesPerSecond),
+          static_cast<unsigned long>(averageRenderMs),
+          static_cast<unsigned long>(averageFlushMs),
+          streamActive ? "on" : "off",
+          audioSpectrumEnabled ? "on" : "off");
+      lastAnimationStatsAt = statsNow;
+      animationRenderTimeUs = 0;
+      animationFlushTimeUs = 0;
+      animationFrameCount = 0;
+      animationFlushCount = 0;
+    }
+  } else {
+    lastAnimationStatsAt = statsNow;
+    animationRenderTimeUs = 0;
+    animationFlushTimeUs = 0;
+    animationFrameCount = 0;
+    animationFlushCount = 0;
   }
 #endif
   delay(1);

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <TFT_eSPI.h>
+#include "radio_display.h"
 
 #include "pet_animation.h"
 

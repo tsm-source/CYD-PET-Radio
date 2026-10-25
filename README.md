@@ -2,8 +2,8 @@
 
 > **AI disclosure:** The text of this README was created with AI assistance.
 
-A touchscreen webradio for the ESP32-based CYD (Cheap Yellow Display) and the
-Freenove FNK0114L, using the same basic board configuration as
+A touchscreen webradio for the ESP32-based CYD (Cheap Yellow Display), the
+Freenove FNK0114L, and the Guition JC3248W535C_I_Y, using the same basic board configuration as
 [CYD of the Dead](https://github.com/tsm-source/CYD-of-the-dead). A round,
 animated cat dances in the left 30% of the display while radio controls fill
 the right side. Both panels are rendered into 8-bit sprite buffers before
@@ -16,21 +16,22 @@ on the decoded audio samples.
 ## Hardware configuration
 
 The firmware supports the CYD and Freenove boards, including two CYD display
-variants. Choose the matching firmware in PlatformIO or the web flasher; the
+variants, plus the Guition JC3248W535C_I_Y. Choose the matching firmware in PlatformIO or the web flasher; the
 display controllers and some board-specific pin configurations differ, so
 the firmware images are not interchangeable.
 
-| Feature | CYD 2.8″ ST7789 | CYD 2.8″ ILI9341 (ESP32-2432S028R) | Freenove FNK0114L 3.2″ |
-|---------|----------------|-----------------------------------|------------------------|
-| Display | ST7789, 240 × 320 | ILI9341, 240 × 320 | ST7789, 240 × 320 |
-| Touch | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, shared HSPI bus |
-| Backlight | GPIO 21 | GPIO 21 | GPIO 27 |
-| PlatformIO environment | `esp32dev` (40 MHz), `esp32dev-fast` (80 MHz), or `esp32dev-fast-low-memory` for HTTPS on boards without PSRAM | `esp32dev-ili9341` (40 MHz) or `esp32dev-ili9341-low-memory` for HTTPS on boards without PSRAM | `fnk0114l` (80 MHz) or `fnk0114l-low-memory` for HTTPS |
-| Display setup | `include/cyd_user_setup.h` | `include/cyd_ili9341_setup.h` | `include/freenove_fnk0114l_setup.h` |
+| Feature | CYD 2.8″ ST7789 | CYD 2.8″ ILI9341 (ESP32-2432S028R) | Freenove FNK0114L 3.2″ | JC3248W535C_I_Y 3.5″ |
+|---------|----------------|-----------------------------------|------------------------|----------------------|
+| Display | ST7789, 240 × 320 | ILI9341, 240 × 320 | ST7789, 240 × 320 | AXS15231B QSPI, 320 × 480 (landscape UI) |
+| Touch | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, shared HSPI bus | Capacitive AXS15231B, I²C |
+| Audio output | Built-in DAC, GPIO 26 | Built-in DAC, GPIO 26 | Built-in DAC, GPIO 26 | On-board I²S output (BCLK 42, LRCLK 2, DOUT 41) |
+| Backlight | GPIO 21 | GPIO 21 | GPIO 27 | GPIO 1 |
+| PlatformIO environment | `esp32dev` (40 MHz), `esp32dev-fast` (80 MHz), or `esp32dev-fast-low-memory` for HTTPS on boards without PSRAM | `esp32dev-ili9341` (40 MHz) or `esp32dev-ili9341-low-memory` for HTTPS on boards without PSRAM | `fnk0114l` (80 MHz) or `fnk0114l-low-memory` for HTTPS | `jc3248w535` |
+| Display setup | `include/cyd_user_setup.h` | `include/cyd_ili9341_setup.h` | `include/freenove_fnk0114l_setup.h` | `include/jc3248w535_display.h` |
 
-Both boards use the ESP32's built-in DAC on GPIO 26 for mono speaker output.
-Wi-Fi credentials and the station list are saved in each board's non-volatile
-storage.
+The CYD and FNK0114L use the ESP32's built-in DAC on GPIO 26 for mono speaker
+output. The JC3248W535C_I_Y uses its on-board I²S audio path. Wi-Fi credentials
+and the station list are saved in each board's non-volatile storage.
 
 The FNK0114L also has an optional rear RGB LED. Open **MENU > RGB LED** to
 enable it, choose one of five colors, and optionally turn on slow pulsing.
@@ -194,7 +195,8 @@ NTP synchronization is also requested after Wi-Fi connects.
 
 The audio decoder is pinned to
 [ESP32-audioI2S 2.0.6](https://github.com/schreibfaul1/ESP32-audioI2S/tree/2.0.6)
-because this release supports the classic ESP32's built-in DAC. The decoder
+because this release supports the classic ESP32's built-in DAC used by the
+CYD/FNK0114L and I²S output used by the JC3248W535C_I_Y. The decoder
 is licensed under GPL-3.0; check its license and the requirements that apply
 when distributing firmware.
 
@@ -207,9 +209,12 @@ settings, and cat animation are implemented for this CYD project.
 After enabling GitHub Pages for this repository with **Settings > Pages >
 Build and deployment > GitHub Actions**, choose the matching board button on
 the [web flasher](https://tsm-source.github.io/CYD-PET-Radio/). Every push to
-`main` builds the three firmware variants and deploys the flasher
-automatically. All three options use low-memory builds, which reserve more
-internal heap for HTTPS/TLS streams.
+`main` builds the four firmware variants and deploys the flasher
+automatically. The CYD and Freenove options use low-memory builds, which
+reserve more internal heap for HTTPS/TLS streams. The JC3248W535C_I_Y profile
+renders the landscape interface at the panel's native 480 × 320 pixel
+resolution, uses PSRAM-backed frame and stream buffers, and updates only the
+display region that changed.
 
 Use a desktop browser that supports Web Serial, such as Chrome or Edge, and a
 USB data cable. If the flasher offers to erase the device, erasing also
@@ -219,7 +224,7 @@ calibration.
 ## Build and upload
 
 Install Visual Studio Code with the PlatformIO IDE extension, then open this
-project folder. Connect the CYD over USB and build or upload with PlatformIO,
+project folder. Connect the board over USB and build or upload with PlatformIO,
 or run:
 
 ```sh
@@ -233,6 +238,8 @@ pio run -e fnk0114l
 pio run -e fnk0114l -t upload
 pio run -e fnk0114l-low-memory
 pio run -e fnk0114l-low-memory -t upload
+pio run -e jc3248w535
+pio run -e jc3248w535 -t upload --upload-port COM9
 ```
 
 ### Diagnose audio stutter on the ILI9341 CYD
