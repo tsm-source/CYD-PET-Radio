@@ -115,6 +115,7 @@ constexpr uint8_t STATION_NAME_SIZE = 32;
 constexpr uint8_t STATION_URL_SIZE = 192;
 constexpr uint16_t CAT_FRAME_INTERVAL_MS = FAT_CAT_FRAME_INTERVAL_MS;
 constexpr uint16_t TOUCH_DEBOUNCE_MS = 180;
+constexpr uint16_t TOUCH_RELEASE_DEBOUNCE_MS = 80;
 constexpr uint32_t WIFI_TIMEOUT_MS = 25000;
 constexpr uint32_t WIFI_RECONNECT_DELAY_MS = 30000;
 constexpr int AUDIO_INPUT_BUFFER_BYTES = 20000;
@@ -329,6 +330,8 @@ String displayedHomeBitrate;
 String statusMessage = "Set up Wi-Fi";
 
 bool touchHeld = false;
+bool touchReleasePending = false;
+uint32_t touchReleaseStartedAt = 0;
 bool wifiConnecting = false;
 bool playWhenConnected = false;
 bool streamActive = false;
@@ -2549,16 +2552,35 @@ void calibrateTouchscreen() {
 #endif
 }
 
-bool readTouchPoint(int16_t &x, int16_t &y) {
-#if defined(BOARD_FREENOVE_FNK0114L)
-  if (display.getTouchRawZ() < 350) {
-    touchHeld = false;
+bool beginTouchPress(bool touched) {
+  if (!touched) {
+    if (touchHeld) {
+      const uint32_t now = millis();
+      if (!touchReleasePending) {
+        touchReleaseStartedAt = now;
+        touchReleasePending = true;
+      } else if (now - touchReleaseStartedAt >=
+                 TOUCH_RELEASE_DEBOUNCE_MS) {
+        touchHeld = false;
+        touchReleasePending = false;
+      }
+    }
     return false;
   }
+
+  touchReleasePending = false;
   if (touchHeld) {
     return false;
   }
   touchHeld = true;
+  return true;
+}
+
+bool readTouchPoint(int16_t &x, int16_t &y) {
+#if defined(BOARD_FREENOVE_FNK0114L)
+  if (!beginTouchPress(display.getTouchRawZ() >= 350)) {
+    return false;
+  }
   const uint32_t now = millis();
   if (now - lastTouchAt < TOUCH_DEBOUNCE_MS) {
     return false;
@@ -2577,14 +2599,9 @@ bool readTouchPoint(int16_t &x, int16_t &y) {
                 0, display.height() - 1);
   return true;
 #elif defined(BOARD_JC3248W535)
-  if (!touchscreenTouched()) {
-    touchHeld = false;
+  if (!beginTouchPress(touchscreenTouched())) {
     return false;
   }
-  if (touchHeld) {
-    return false;
-  }
-  touchHeld = true;
 
   const uint32_t now = millis();
   if (now - lastTouchAt < TOUCH_DEBOUNCE_MS) {
@@ -2621,14 +2638,9 @@ bool readTouchPoint(int16_t &x, int16_t &y) {
   y = constrain(mappedY, 0, jc3248w535::DISPLAY_HEIGHT - 1);
   return true;
 #else
-  if (!touchscreenTouched()) {
-    touchHeld = false;
+  if (!beginTouchPress(touchscreenTouched())) {
     return false;
   }
-  if (touchHeld) {
-    return false;
-  }
-  touchHeld = true;
 
   const uint32_t now = millis();
   if (now - lastTouchAt < TOUCH_DEBOUNCE_MS) {
@@ -4273,6 +4285,9 @@ void loop() {
     if (currentScreen == Screen::Home) {
       homeMetadataDirty = true;
     }
+  }
+  if (currentScreen != Screen::Home && uiDirty) {
+    renderScreen();
   }
   if (currentScreen == Screen::Home &&
       now - lastCatFrameAt >= CAT_FRAME_INTERVAL_MS) {
