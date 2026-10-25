@@ -83,27 +83,6 @@ constexpr int16_t HOME_BOTTOM_BUTTON_GAP =
     HOME_UI_WIDTH - 2 * HOME_BOTTOM_BUTTON_WIDTH;
 constexpr int16_t MENU_UI_LEFT = 12;
 constexpr int16_t MENU_UI_WIDTH = DISPLAY_WIDTH - 2 * MENU_UI_LEFT;
-#if defined(BOARD_FREENOVE_FNK0114L)
-#if defined(CYD_LOW_MEMORY_DIRECT_RENDER)
-constexpr char BUILD_PROFILE_NAME[] = "fnk0114l-low-memory";
-#else
-constexpr char BUILD_PROFILE_NAME[] = "fnk0114l";
-#endif
-#elif defined(ILI9341_DRIVER)
-#if defined(CYD_LOW_MEMORY_DIRECT_RENDER)
-constexpr char BUILD_PROFILE_NAME[] = "esp32dev-ili9341-low-memory";
-#else
-constexpr char BUILD_PROFILE_NAME[] = "esp32dev-ili9341";
-#endif
-#elif defined(BOARD_JC3248W535)
-constexpr char BUILD_PROFILE_NAME[] = "jc3248w535";
-#elif defined(CYD_LOW_MEMORY_DIRECT_RENDER)
-constexpr char BUILD_PROFILE_NAME[] = "esp32dev-fast-low-memory";
-#elif defined(SPI_FREQUENCY) && SPI_FREQUENCY >= 80000000
-constexpr char BUILD_PROFILE_NAME[] = "esp32dev-fast";
-#else
-constexpr char BUILD_PROFILE_NAME[] = "esp32dev";
-#endif
 #if defined(BOARD_JC3248W535)
 constexpr int16_t SETTINGS_ITEM_HEIGHT = 48;
 constexpr int16_t SETTINGS_ITEM_GAP = 12;
@@ -296,7 +275,6 @@ TaskHandle_t radioAudioTaskHandle = nullptr;
 portMUX_TYPE audioCallbackMux = portMUX_INITIALIZER_UNLOCKED;
 char pendingStationName[128]{};
 char pendingStreamTitle[192]{};
-char pendingStreamEnd[128]{};
 bool pendingStationNameUpdate = false;
 bool pendingStreamTitleUpdate = false;
 bool pendingStreamEndUpdate = false;
@@ -371,9 +349,7 @@ bool audioDirty = false;
 bool homeMetadataDirty = false;
 bool homeBitrateDirty = false;
 bool homeClockDirty = false;
-// bool displayReady = false;  // No code reads this flag.
 volatile uint8_t wifiDisconnectReason = 0;
-volatile bool wifiDisconnectReasonPending = false;
 uint8_t selectedPetIndex = 0;
 uint8_t displayedPetIndex = 0;
 int8_t petTitleIndex = -1;
@@ -381,15 +357,6 @@ uint32_t wifiConnectStartedAt = 0;
 uint32_t streamRestartAt = 0;
 uint32_t lastTouchAt = 0;
 uint32_t lastCatFrameAt = 0;
-#if defined(BOARD_JC3248W535)
-uint32_t lastAnimationStatsAt = 0;
-uint32_t animationRenderTimeUs = 0;
-uint32_t animationCopyTimeUs = 0;
-uint32_t animationTransferTimeUs = 0;
-uint32_t animationPixelCount = 0;
-uint16_t animationFrameCount = 0;
-uint16_t animationFlushCount = 0;
-#endif
 uint32_t petTransitionStartedAt = 0;
 uint32_t nextDanceChangeAt = 0;
 uint32_t lastClockUpdateAt = 0;
@@ -454,8 +421,6 @@ bool startRadioAudioTask() {
     radioAudioMutex = nullptr;
     return false;
   }
-  Serial.printf("Radio audio task started on core %d (priority %u).\n",
-                RADIO_AUDIO_TASK_CORE, RADIO_AUDIO_TASK_PRIORITY);
   return true;
 }
 
@@ -528,7 +493,6 @@ i2s_port_t radioI2sPort() {
 void applyPendingAudioCallbacks() {
   char station[sizeof(pendingStationName)];
   char title[sizeof(pendingStreamTitle)];
-  char streamEnd[sizeof(pendingStreamEnd)];
   bool stationChanged = false;
   bool titleChanged = false;
   bool streamEnded = false;
@@ -545,7 +509,6 @@ void applyPendingAudioCallbacks() {
     pendingStreamTitleUpdate = false;
   }
   if (streamEnded) {
-    strlcpy(streamEnd, pendingStreamEnd, sizeof(streamEnd));
     pendingStreamEndUpdate = false;
   }
   portEXIT_CRITICAL(&audioCallbackMux);
@@ -553,25 +516,16 @@ void applyPendingAudioCallbacks() {
   if (stationChanged) {
     streamStation = station;
     audioDirty = true;
-    Serial.printf("station: %s\n", station);
   }
   if (titleChanged) {
     streamTitle = title;
     audioDirty = true;
-    Serial.printf("stream title: %s\n", title);
   }
-  if (streamEnded) {
-    if (!streamActive) {
-      Serial.printf("audio: ignoring stream end before successful connection "
-                    "(%s)\n",
-                    streamEnd);
-    } else {
-      streamActive = false;
-      streamRestartPending = true;
-      streamRestartAt = millis();
-      setStatus("Stream ended");
-      Serial.printf("audio: stream ended (%s)\n", streamEnd);
-    }
+  if (streamEnded && streamActive) {
+    streamActive = false;
+    streamRestartPending = true;
+    streamRestartAt = millis();
+    setStatus("Stream ended");
   }
 }
 #else
@@ -2907,9 +2861,6 @@ bool migrateDefaultStationUrls() {
                 "https://lsn.lv/bbcradio.m3u8?station=bbc_radio_two&bitrate=96000") ==
              0);
     if (isDefaultBbcOne || isDefaultBbcTwo || isEnglishFactoryStation) {
-      char removedStation[STATION_NAME_SIZE];
-      strlcpy(removedStation, stations[stationIndex].name,
-              sizeof(removedStation));
       if (!shiftStationUrls(stationIndex, stationCount)) {
         return changed;
       }
@@ -2921,8 +2872,6 @@ bool migrateDefaultStationUrls() {
         --selectedStation;
       }
       changed = true;
-      Serial.printf("Removed English-language factory station %s.\n",
-                    removedStation);
       continue;
     }
     for (const UrlMigration &migration : migrations) {
@@ -2940,7 +2889,6 @@ bool migrateDefaultStationUrls() {
             return changed;
           }
           changed = true;
-          Serial.printf("Updated saved stream URL for %s.\n", migration.name);
           break;
         }
       }
@@ -3013,7 +2961,6 @@ void loadStations() {
     if (isLegacyDefaultPlaylist()) {
       loadDefaultStations();
       saveStationList();
-      Serial.println("Migrated default playlist to favorite stations.");
     } else if (migrateDefaultStationUrls()) {
       saveStationList();
       if (preferences.putUChar("selected", selectedStation) == 0) {
@@ -3136,16 +3083,6 @@ void startStream() {
     setStatus("Could not load station URL");
     return;
   }
-  const uint32_t internalFreeHeap =
-      heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  const uint32_t internalLargestBlock =
-      heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-  Serial.printf(
-      "Memory before stream %u: internal free=%u bytes, largest block=%u "
-      "bytes, PSRAM=%u bytes.\n",
-      selectedStation + 1, static_cast<unsigned>(internalFreeHeap),
-      static_cast<unsigned>(internalLargestBlock),
-      static_cast<unsigned>(ESP.getPsramSize()));
   if (!connectRadioToHost(stationUrl)) {
     streamActive = false;
     setStatus("Could not start stream");
@@ -3212,7 +3149,6 @@ void startWifiConnection() {
   }
 
   wifiDisconnectReason = 0;
-  wifiDisconnectReasonPending = false;
   wifiConnecting = true;
   playWhenConnected = true;
   wifiConnectStartedAt = millis();
@@ -3226,11 +3162,6 @@ void startWifiConnection() {
     setStatus("Could not start Wi-Fi");
     Serial.println("ERROR: Wi-Fi rejected the connection request.");
   }
-  Serial.printf("Wi-Fi connect requested (SSID length %u, password length "
-                "%u, initial status %d).\n",
-                static_cast<unsigned>(wifiSsid.length()),
-                static_cast<unsigned>(wifiPassword.length()),
-                static_cast<int>(result));
 }
 
 // Translate common Wi-Fi disconnect causes into actionable UI messages.
@@ -3256,16 +3187,6 @@ String wifiFailureMessage(wl_status_t status, uint8_t reason) {
 
 // Process asynchronous Wi-Fi events, timeouts, and automatic playback startup.
 void updateNetwork() {
-  if (wifiDisconnectReasonPending) {
-    const uint8_t reason = wifiDisconnectReason;
-    wifiDisconnectReasonPending = false;
-    Serial.printf("Wi-Fi disconnected: reason %u (%s), status %d.\n",
-                  reason,
-                  WiFi.disconnectReasonName(
-                      static_cast<wifi_err_reason_t>(reason)),
-                  static_cast<int>(WiFi.status()));
-  }
-
   static uint32_t wifiLostAt = 0;
   if (WiFi.status() == WL_CONNECTED) {
     wifiLostAt = 0;
@@ -3289,7 +3210,6 @@ void updateNetwork() {
     wifiLostAt = millis();
   } else if (millis() - wifiLostAt >= WIFI_RECONNECT_DELAY_MS) {
     wifiLostAt = 0;
-    Serial.println("Wi-Fi down for 30 s, reconnecting.");
     WiFi.disconnect();
     startWifiConnection();
     return;
@@ -4042,10 +3962,7 @@ void handleTouch(int16_t x, int16_t y) {
 
 }  // namespace
 
-// Audio-library callback used for decoder diagnostics.
-void audio_info(const char *info) {
-  Serial.printf("audio: %s\n", info);
-}
+void audio_info(const char *) {}
 
 // Audio-library callback for the station name currently being decoded.
 void audio_showstation(const char *info) {
@@ -4057,7 +3974,6 @@ void audio_showstation(const char *info) {
 #else
   streamStation = info;
   audioDirty = true;
-  Serial.printf("station: %s\n", info);
 #endif
 }
 
@@ -4071,46 +3987,29 @@ void audio_showstreamtitle(const char *info) {
 #else
   streamTitle = info;
   audioDirty = true;
-  Serial.printf("stream title: %s\n", info);
 #endif
 }
 
 // Schedule a delayed reconnect when the decoder reports end of stream.
 void audio_eof_stream(const char *info) {
 #if defined(BOARD_JC3248W535)
+  (void)info;
   portENTER_CRITICAL(&audioCallbackMux);
-  strlcpy(pendingStreamEnd, info, sizeof(pendingStreamEnd));
   pendingStreamEndUpdate = true;
   portEXIT_CRITICAL(&audioCallbackMux);
 #else
-  if (!streamActive) {
-    Serial.printf("audio: ignoring stream end before successful connection (%s)\n",
-                  info);
-    return;
-  }
+  (void)info;
+  if (!streamActive) return;
   streamActive = false;
   streamRestartPending = true;
   streamRestartAt = millis();
   setStatus("Stream ended");
-  Serial.printf("audio: stream ended (%s)\n", info);
 #endif
 }
 
 // Initialize hardware, restore settings, calibrate touch, and start networking.
 void setup() {
   Serial.begin(115200);
-#if defined(BOARD_JC3248W535)
-  Serial.printf("Booting CYD PET Radio for JC3248W535C_I_Y. Display: "
-                "AXS15231B QSPI; profile: %s.\n",
-                BUILD_PROFILE_NAME);
-#elif defined(BOARD_FREENOVE_FNK0114L)
-  Serial.printf("Booting CYD PET Radio for Freenove FNK0114L. Display: %s; "
-                "profile: %s.\n",
-                USER_SETUP_INFO, BUILD_PROFILE_NAME);
-#else
-  Serial.printf("Booting CYD PET Radio for CYD. Display: %s; profile: %s.\n",
-                USER_SETUP_INFO, BUILD_PROFILE_NAME);
-#endif
 #if defined(BOARD_JC3248W535)
   if (!display.init()) {
     Serial.println("ERROR: JC3248W535 display initialization failed.");
@@ -4142,9 +4041,7 @@ void setup() {
     }
   }
   displayFramebufferReady = true;
-#elif defined(BOARD_JC3248W535)
-  Serial.println("Display uses native 480x320 coordinates on every screen.");
-#else
+#elif !defined(BOARD_JC3248W535)
   petPanelFrameBuffer.setColorDepth(8);
   petPanelFramebufferReady =
       petPanelFrameBuffer.createSprite(CAT_PANEL_WIDTH, DISPLAY_HEIGHT);
@@ -4153,8 +4050,6 @@ void setup() {
                   static_cast<unsigned>(CAT_PANEL_WIDTH * DISPLAY_HEIGHT));
   } else {
     petPanelFrameBuffer.fillSprite(0x0841);
-    Serial.printf("Display uses %u-byte pet panel framebuffer.\n",
-                  static_cast<unsigned>(CAT_PANEL_WIDTH * DISPLAY_HEIGHT));
   }
   homeUpdateFrameBuffer.setColorDepth(8);
   homeUpdateFramebufferReady =
@@ -4162,9 +4057,6 @@ void setup() {
   if (!homeUpdateFramebufferReady) {
     Serial.printf("WARNING: could not allocate %u-byte home update framebuffer; "
                   "partial updates will draw directly.\n",
-                  static_cast<unsigned>(HOME_UI_WIDTH * 62));
-  } else {
-    Serial.printf("Display uses %u-byte home update framebuffer.\n",
                   static_cast<unsigned>(HOME_UI_WIDTH * 62));
   }
 #endif
@@ -4177,7 +4069,6 @@ void setup() {
   delay(20);
   digitalWrite(TOUCH_RESET_PIN, HIGH);
   delay(200);
-  Serial.println("AXS15231B capacitive touchscreen initialized over I2C.");
 #elif !defined(BOARD_FREENOVE_FNK0114L)
   touchSPI.begin(25, 39, 32, 33);
   if (!touch.begin(touchSPI)) {
@@ -4191,7 +4082,6 @@ void setup() {
   }
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
-  Serial.println("Boot: preferences opened.");
   volume = min<uint8_t>(preferences.getUChar("volume", 10), 21);
 #if defined(BOARD_JC3248W535)
   displayBrightness =
@@ -4237,9 +4127,7 @@ void setup() {
   display.fillScreen(backgroundColor);
   setAudioSpectrumEnabled(audioSpectrumEnabled);
   selectedStation = preferences.getUChar("selected", 0);
-  Serial.println("Boot: loading stations.");
   loadStations();
-  Serial.println("Boot: stations loaded.");
   if (selectedStation >= stationCount) {
     selectedStation = 0;
   }
@@ -4257,8 +4145,6 @@ void setup() {
   }
   if (!freenoveTouchCalibration.valid) {
     calibrateTouchscreen();
-  } else {
-    Serial.println("Freenove touchscreen calibration loaded.");
   }
 #else
   if (preferences.getUChar("touchVer", 0) == TOUCH_CALIBRATION_VERSION) {
@@ -4282,8 +4168,6 @@ void setup() {
   }
   if (!touchCalibration.valid) {
     calibrateTouchscreen();
-  } else {
-    Serial.println("Touchscreen calibration loaded.");
   }
 #endif
 
@@ -4318,7 +4202,6 @@ void setup() {
   WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info) {
     if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
       wifiDisconnectReason = info.wifi_sta_disconnected.reason;
-      wifiDisconnectReasonPending = true;
     }
   });
   if (!wifiSsid.isEmpty()) {
@@ -4351,18 +4234,13 @@ void loop() {
   if (streamRestartPending && WiFi.status() == WL_CONNECTED &&
       stationCount > 0 &&
       now - streamRestartAt >= STREAM_RETRY_DELAY_MS) {
-    Serial.println("audio: retrying ended stream.");
     startStream();
   }
   if (!timerModeActive()) {
     if (petTransition == PetTransition::Idle &&
         displayedPetIndex == selectedPetIndex &&
         now - lastPetChangeAt >= RANDOM_PET_INTERVAL_MS) {
-      const uint32_t petIntervalMs = now - lastPetChangeAt;
       chooseDifferentPet();
-      Serial.printf("Pet: changing to %s after %lu ms.\n",
-                    petList[selectedPetIndex].animalName,
-                    static_cast<unsigned long>(petIntervalMs));
     }
     updatePetAnimation(now);
     updateBubbleText(now);
@@ -4396,37 +4274,12 @@ void loop() {
       homeMetadataDirty = true;
     }
   }
-#if defined(DIAGNOSTIC_NO_DISPLAY_DURING_AUDIO)
-  const bool freezeDisplayForAudioTest =
-      currentScreen == Screen::Home && streamActive;
-  if (!freezeDisplayForAudioTest) {
-#endif
-    if (currentScreen == Screen::Home &&
-        now - lastCatFrameAt >= CAT_FRAME_INTERVAL_MS) {
-      lastCatFrameAt = now;
-      if (uiDirty) {
-        renderScreen();
-      } else {
-        if (homeMetadataDirty) {
-          refreshHomeMetadata();
-        } else if (homeBitrateDirty) {
-          refreshHomeBitrate();
-        }
-        if (homeClockDirty) {
-          refreshHomeClock();
-        }
-#if defined(BOARD_JC3248W535)
-        const uint32_t renderStartedAt = micros();
-#endif
-        drawCatFrame(now);
-#if defined(BOARD_JC3248W535)
-        animationRenderTimeUs += micros() - renderStartedAt;
-        ++animationFrameCount;
-#endif
-      }
-    } else if (uiDirty) {
+  if (currentScreen == Screen::Home &&
+      now - lastCatFrameAt >= CAT_FRAME_INTERVAL_MS) {
+    lastCatFrameAt = now;
+    if (uiDirty) {
       renderScreen();
-    } else if (currentScreen == Screen::Home) {
+    } else {
       if (homeMetadataDirty) {
         refreshHomeMetadata();
       } else if (homeBitrateDirty) {
@@ -4435,70 +4288,11 @@ void loop() {
       if (homeClockDirty) {
         refreshHomeClock();
       }
+      drawCatFrame(now);
     }
-#if defined(DIAGNOSTIC_NO_DISPLAY_DURING_AUDIO)
   }
-#endif
 #if defined(BOARD_JC3248W535)
   display.flushFrame();
-  if (display.lastFlushPixelCount() > 0) {
-    animationCopyTimeUs += display.lastFlushCopyTimeUs();
-    animationTransferTimeUs += display.lastFlushTransferTimeUs();
-    animationPixelCount += display.lastFlushPixelCount();
-    ++animationFlushCount;
-  }
-  const uint32_t statsNow = millis();
-  if (currentScreen == Screen::Home) {
-    if (lastAnimationStatsAt == 0) {
-      lastAnimationStatsAt = statsNow;
-    } else if (statsNow - lastAnimationStatsAt >= 5000) {
-      const uint32_t elapsedMs = statsNow - lastAnimationStatsAt;
-      const uint32_t framesPerSecond =
-          static_cast<uint32_t>(animationFrameCount) * 1000 / elapsedMs;
-      const uint32_t averageRenderMs =
-          animationFrameCount == 0
-              ? 0
-              : animationRenderTimeUs / animationFrameCount / 1000;
-      const uint32_t averageCopyMs =
-          animationFlushCount == 0
-              ? 0
-              : animationCopyTimeUs / animationFlushCount / 1000;
-      const uint32_t averageTransferMs =
-          animationFlushCount == 0
-              ? 0
-              : animationTransferTimeUs / animationFlushCount / 1000;
-      const uint32_t averagePixelCount =
-          animationFlushCount == 0
-              ? 0
-              : animationPixelCount / animationFlushCount;
-      Serial.printf(
-          "Animation: %lu fps; render avg %lu ms; pack avg %lu ms; QSPI avg "
-          "%lu ms; update avg %lu px; pet %s; audio %s; spectrum %s.\n",
-          static_cast<unsigned long>(framesPerSecond),
-          static_cast<unsigned long>(averageRenderMs),
-          static_cast<unsigned long>(averageCopyMs),
-          static_cast<unsigned long>(averageTransferMs),
-          static_cast<unsigned long>(averagePixelCount),
-          petList[displayedPetIndex].animalName,
-          streamActive ? "on" : "off",
-          audioSpectrumEnabled ? "on" : "off");
-      lastAnimationStatsAt = statsNow;
-      animationRenderTimeUs = 0;
-      animationCopyTimeUs = 0;
-      animationTransferTimeUs = 0;
-      animationPixelCount = 0;
-      animationFrameCount = 0;
-      animationFlushCount = 0;
-    }
-  } else {
-    lastAnimationStatsAt = statsNow;
-    animationRenderTimeUs = 0;
-    animationCopyTimeUs = 0;
-    animationTransferTimeUs = 0;
-    animationPixelCount = 0;
-    animationFrameCount = 0;
-    animationFlushCount = 0;
-  }
 #endif
   delay(1);
 }

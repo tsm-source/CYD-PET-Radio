@@ -239,31 +239,8 @@ pio run -e fnk0114l -t upload
 pio run -e fnk0114l-low-memory
 pio run -e fnk0114l-low-memory -t upload
 pio run -e jc3248w535
-pio run -e jc3248w535 -t upload --upload-port COM9
+pio run -e jc3248w535 -t upload --upload-port COM10
 ```
-
-### Diagnose audio stutter on the ILI9341 CYD
-
-To test whether display refreshes are interrupting audio processing, flash a
-temporary build that freezes the home screen while a stream is active:
-
-```sh
-pio run -e esp32dev-ili9341-audio-test -t upload --upload-port COM9
-```
-
-Leave the radio on its home screen during the test. The firmware keeps playing
-audio but does not redraw that screen until the stream stops. To return to the
-normal ILI9341 firmware, upload its separate, unchanged environment:
-
-```sh
-pio run -e esp32dev-ili9341 -t upload --upload-port COM9
-```
-
-Neither upload requires erasing the board, so saved Wi-Fi credentials,
-stations, volume, and touch calibration are preserved. If audio stutters only
-with the normal firmware, display refresh work is implicated; if it also
-stutters with the frozen display, investigate the board's audio hardware or
-stream path instead.
 
 The volume, Wi-Fi credentials, touchscreen calibration, and station list are
 stored on each board and persist across reboots.

@@ -45,7 +45,6 @@ constexpr uint16_t BAND_COLOURS[SPECTRUM_BANDS] = {
 AudioBlock audioBlocks[AUDIO_BLOCK_COUNT]{};
 volatile uint8_t queuedBlocks = 0;
 volatile bool captureEnabled = true;
-// uint8_t readBlock = 0;  // Analysis always consumes the newest queued block.
 uint8_t writeBlock = 0;
 uint16_t captureIndex = 0;
 volatile uint32_t lastAudioBlockAt = 0;
@@ -164,7 +163,6 @@ void setAudioSpectrumEnabled(bool enabled) {
   portENTER_CRITICAL(&audioBlocksMux);
   captureEnabled = enabled;
   queuedBlocks = 0;
-  // readBlock = 0;
   writeBlock = 0;
   captureIndex = 0;
   lastAudioBlockAt = 0;

@@ -249,11 +249,7 @@ class TFT_eSPI : public Arduino_Canvas {
         nativeBottom - nativeTop, color);
   }
 
-  bool flushFrame(void (*serviceAudio)() = nullptr) {
-    lastFlushCopyTimeUs_ = 0;
-    lastFlushTransferTimeUs_ = 0;
-    lastFlushAudioTimeUs_ = 0;
-    lastFlushPixelCount_ = 0;
+  bool flushFrame() {
     if (!dirty_) {
       return true;
     }
@@ -261,9 +257,7 @@ class TFT_eSPI : public Arduino_Canvas {
       Serial.println("ERROR: display frame buffer is unavailable.");
       return false;
     }
-
     const uint16_t *source = getFramebuffer();
-    const uint32_t copyStartedAt = micros();
     for (int16_t panelY = 0; panelY < jc3248w535::PANEL_HEIGHT; ++panelY) {
       const int16_t screenX =
           jc3248w535::PANEL_HEIGHT - 1 - panelY;
@@ -273,20 +267,9 @@ class TFT_eSPI : public Arduino_Canvas {
             source[panelX * jc3248w535::DISPLAY_WIDTH + screenX];
       }
     }
-    lastFlushCopyTimeUs_ = micros() - copyStartedAt;
-    const uint32_t transferStartedAt = micros();
     jc3248w535::displayPanel.draw16bitRGBBitmap(
         0, 0, outputBuffer_, jc3248w535::PANEL_WIDTH,
         jc3248w535::PANEL_HEIGHT);
-    lastFlushTransferTimeUs_ = micros() - transferStartedAt;
-    if (serviceAudio != nullptr) {
-      const uint32_t audioStartedAt = micros();
-      serviceAudio();
-      lastFlushAudioTimeUs_ += micros() - audioStartedAt;
-    }
-    lastFlushPixelCount_ =
-        static_cast<uint32_t>(jc3248w535::PANEL_WIDTH) *
-        jc3248w535::PANEL_HEIGHT;
     dirty_ = false;
     dirtyLeft_ = coordinateWidth();
     dirtyTop_ = coordinateHeight();
@@ -294,13 +277,6 @@ class TFT_eSPI : public Arduino_Canvas {
     dirtyBottom_ = 0;
     return true;
   }
-
-  uint32_t lastFlushCopyTimeUs() const { return lastFlushCopyTimeUs_; }
-  uint32_t lastFlushTransferTimeUs() const {
-    return lastFlushTransferTimeUs_;
-  }
-  uint32_t lastFlushAudioTimeUs() const { return lastFlushAudioTimeUs_; }
-  uint32_t lastFlushPixelCount() const { return lastFlushPixelCount_; }
 
  private:
   int32_t coordinateWidth() const {
@@ -368,10 +344,6 @@ class TFT_eSPI : public Arduino_Canvas {
   bool dirty_ = false;
   bool nativeCoordinates_ = false;
   bool petDrawingScale_ = false;
-  uint32_t lastFlushCopyTimeUs_ = 0;
-  uint32_t lastFlushTransferTimeUs_ = 0;
-  uint32_t lastFlushAudioTimeUs_ = 0;
-  uint32_t lastFlushPixelCount_ = 0;
 };
 
 class TFT_eSprite : public TFT_eSPI {
