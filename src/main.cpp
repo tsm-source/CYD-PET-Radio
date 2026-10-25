@@ -53,8 +53,28 @@ constexpr int16_t CAT_PANEL_WIDTH = FAT_CAT_PANEL_WIDTH;
 constexpr int16_t PET_HEADER_HEIGHT = 32;
 #if defined(BOARD_JC3248W535)
 constexpr int16_t PET_ANIMATION_HEIGHT = 265 - PET_HEADER_HEIGHT;
+constexpr int16_t TIMER_PANEL_HEIGHT = 265;
+constexpr int16_t TIMER_INCREASE_BUTTON_Y = 48;
+constexpr int16_t TIMER_COUNTDOWN_Y = 110;
+constexpr int16_t TIMER_DECREASE_BUTTON_Y = 156;
+constexpr int16_t TIMER_ACTION_BUTTON_Y = 213;
+constexpr int16_t TIMER_ACTION_BUTTON_HEIGHT = 42;
+constexpr int16_t TIMER_ADJUST_LEFT_X = 5;
+constexpr int16_t TIMER_ADJUST_RIGHT_X = 69;
+constexpr int16_t TIMER_ADJUST_BUTTON_WIDTH = 54;
+constexpr int16_t TIMER_ADJUST_BUTTON_HEIGHT = 34;
 #else
 constexpr int16_t PET_ANIMATION_HEIGHT = 195 - PET_HEADER_HEIGHT;
+constexpr int16_t TIMER_PANEL_HEIGHT = 195;
+constexpr int16_t TIMER_INCREASE_BUTTON_Y = 39;
+constexpr int16_t TIMER_COUNTDOWN_Y = 91;
+constexpr int16_t TIMER_DECREASE_BUTTON_Y = 123;
+constexpr int16_t TIMER_ACTION_BUTTON_Y = 158;
+constexpr int16_t TIMER_ACTION_BUTTON_HEIGHT = 27;
+constexpr int16_t TIMER_ADJUST_LEFT_X = 4;
+constexpr int16_t TIMER_ADJUST_RIGHT_X = 49;
+constexpr int16_t TIMER_ADJUST_BUTTON_WIDTH = 43;
+constexpr int16_t TIMER_ADJUST_BUTTON_HEIGHT = 25;
 #endif
 #if defined(BOARD_JC3248W535)
 constexpr int16_t HOME_UI_LEFT = 132;
@@ -865,9 +885,24 @@ void drawSpeechBubble(TFT_eSPI &frameBuffer, const char *text) {
 
 void drawTimerAdjustButton(int16_t x, int16_t y, bool increase,
                            const char *label) {
-  renderTarget->fillRoundRect(x, y, 43, 25, 5,
+  renderTarget->fillRoundRect(x, y, TIMER_ADJUST_BUTTON_WIDTH,
+                              TIMER_ADJUST_BUTTON_HEIGHT, 5,
                               BUTTON_COLORS[buttonColorIndex]);
-  renderTarget->drawRoundRect(x, y, 43, 25, 5, 0x4208);
+  renderTarget->drawRoundRect(x, y, TIMER_ADJUST_BUTTON_WIDTH,
+                              TIMER_ADJUST_BUTTON_HEIGHT, 5, 0x4208);
+#if defined(BOARD_JC3248W535)
+  const int16_t centerY = y + TIMER_ADJUST_BUTTON_HEIGHT / 2;
+  if (increase) {
+    renderTarget->fillTriangle(x + 8, centerY + 3, x + 20, centerY + 3,
+                               x + 14, centerY - 5, TFT_WHITE);
+  } else {
+    renderTarget->fillTriangle(x + 8, centerY - 3, x + 20, centerY - 3,
+                               x + 14, centerY + 5, TFT_WHITE);
+  }
+  renderTarget->setTextDatum(MC_DATUM);
+  renderTarget->setTextColor(TFT_WHITE, BUTTON_COLORS[buttonColorIndex]);
+  renderTarget->drawString(label, x + 39, centerY, 1);
+#else
   if (increase) {
     renderTarget->fillTriangle(x + 7, y + 13, x + 15, y + 13, x + 11,
                                y + 7, TFT_WHITE);
@@ -878,21 +913,20 @@ void drawTimerAdjustButton(int16_t x, int16_t y, bool increase,
   renderTarget->setTextDatum(MC_DATUM);
   renderTarget->setTextColor(TFT_WHITE, BUTTON_COLORS[buttonColorIndex]);
   renderTarget->drawString(label, x + 30, y + 13, 1);
+#endif
 }
 
 void drawTimerActionButton(const char *label) {
-  renderTarget->fillRoundRect(8, 158, 80, 27, 6,
+  renderTarget->fillRoundRect(8, TIMER_ACTION_BUTTON_Y, 80,
+                              TIMER_ACTION_BUTTON_HEIGHT, 6,
                               BUTTON_COLORS[buttonColorIndex]);
-  renderTarget->drawRoundRect(8, 158, 80, 27, 6, 0x4208);
+  renderTarget->drawRoundRect(8, TIMER_ACTION_BUTTON_Y, 80,
+                              TIMER_ACTION_BUTTON_HEIGHT, 6, 0x4208);
   renderTarget->setTextDatum(MC_DATUM);
   renderTarget->setTextColor(TFT_WHITE, BUTTON_COLORS[buttonColorIndex]);
-#if defined(BOARD_JC3248W535)
-  renderTarget->setTextSize(1);
-  renderTarget->drawString(label, 48, 172, 2);
-  renderTarget->setTextSize(1);
-#else
-  renderTarget->drawString(label, 48, 172, 2);
-#endif
+  const int16_t centerY =
+      TIMER_ACTION_BUTTON_Y + TIMER_ACTION_BUTTON_HEIGHT / 2;
+  renderTarget->drawString(label, 48, centerY, 2);
 }
 
 // Render timer controls, or replace the panel with the pulsing expiry screen.
@@ -926,7 +960,7 @@ void drawTimerPanel(uint32_t now) {
     return;
   }
 
-  renderTarget->fillRect(0, 0, CAT_PANEL_WIDTH, 195, 0x0841);
+  renderTarget->fillRect(0, 0, CAT_PANEL_WIDTH, TIMER_PANEL_HEIGHT, 0x0841);
   renderTarget->setTextDatum(MC_DATUM);
   renderTarget->setTextColor(TFT_CYAN, 0x0841);
   switch (timerState) {
@@ -946,8 +980,10 @@ void drawTimerPanel(uint32_t now) {
   }
 
   if (timerState == TimerState::Ready || timerState == TimerState::Paused) {
-    drawTimerAdjustButton(4, 39, true, "1m");
-    drawTimerAdjustButton(49, 39, true, "10s");
+    drawTimerAdjustButton(TIMER_ADJUST_LEFT_X, TIMER_INCREASE_BUTTON_Y, true,
+                          "1m");
+    drawTimerAdjustButton(TIMER_ADJUST_RIGHT_X, TIMER_INCREASE_BUTTON_Y, true,
+                          "10s");
   }
 
   const uint32_t remainingSeconds = (timerRemainingMs(now) + 999) / 1000;
@@ -958,10 +994,10 @@ void drawTimerPanel(uint32_t now) {
              static_cast<unsigned long>(remainingSeconds));
 #if defined(BOARD_JC3248W535)
     renderTarget->setTextSize(1);
-    renderTarget->drawString(seconds, 48, 91, 3);
+    renderTarget->drawString(seconds, 48, TIMER_COUNTDOWN_Y, 2);
 #else
     renderTarget->setTextSize(3);
-    renderTarget->drawString(seconds, 48, 91, 2);
+    renderTarget->drawString(seconds, 48, TIMER_COUNTDOWN_Y, 2);
 #endif
     renderTarget->setTextSize(1);
   } else {
@@ -971,17 +1007,19 @@ void drawTimerPanel(uint32_t now) {
              static_cast<unsigned long>(remainingSeconds % 60));
 #if defined(BOARD_JC3248W535)
     renderTarget->setTextSize(1);
-    renderTarget->drawString(countdown, 48, 91, 2);
+    renderTarget->drawString(countdown, 48, TIMER_COUNTDOWN_Y, 2);
 #else
     renderTarget->setTextSize(2);
-    renderTarget->drawString(countdown, 48, 91, 2);
+    renderTarget->drawString(countdown, 48, TIMER_COUNTDOWN_Y, 2);
 #endif
     renderTarget->setTextSize(1);
   }
 
   if (timerState == TimerState::Ready || timerState == TimerState::Paused) {
-    drawTimerAdjustButton(4, 123, false, "1m");
-    drawTimerAdjustButton(49, 123, false, "10s");
+    drawTimerAdjustButton(TIMER_ADJUST_LEFT_X, TIMER_DECREASE_BUTTON_Y, false,
+                          "1m");
+    drawTimerAdjustButton(TIMER_ADJUST_RIGHT_X, TIMER_DECREASE_BUTTON_Y, false,
+                          "10s");
     drawTimerActionButton("START");
   } else {
     drawTimerActionButton("STOP");
@@ -1628,21 +1666,29 @@ void refreshHomeClock() {
 // Route touches on the timer panel to duration, start, pause, or confirm actions.
 void handleTimerTouch(int16_t x, int16_t y, uint32_t now) {
   if ((timerState == TimerState::Ready || timerState == TimerState::Paused) &&
-      pointInRect(x, y, 4, 39, 43, 25)) {
+      pointInRect(x, y, TIMER_ADJUST_LEFT_X, TIMER_INCREASE_BUTTON_Y,
+                  TIMER_ADJUST_BUTTON_WIDTH, TIMER_ADJUST_BUTTON_HEIGHT)) {
     changeTimerDuration(60);
   } else if ((timerState == TimerState::Ready ||
               timerState == TimerState::Paused) &&
-             pointInRect(x, y, 49, 39, 43, 25)) {
+             pointInRect(x, y, TIMER_ADJUST_RIGHT_X,
+                         TIMER_INCREASE_BUTTON_Y, TIMER_ADJUST_BUTTON_WIDTH,
+                         TIMER_ADJUST_BUTTON_HEIGHT)) {
     changeTimerDuration(10);
   } else if ((timerState == TimerState::Ready ||
               timerState == TimerState::Paused) &&
-             pointInRect(x, y, 4, 123, 43, 25)) {
+             pointInRect(x, y, TIMER_ADJUST_LEFT_X, TIMER_DECREASE_BUTTON_Y,
+                         TIMER_ADJUST_BUTTON_WIDTH,
+                         TIMER_ADJUST_BUTTON_HEIGHT)) {
     changeTimerDuration(-60);
   } else if ((timerState == TimerState::Ready ||
               timerState == TimerState::Paused) &&
-             pointInRect(x, y, 49, 123, 43, 25)) {
+             pointInRect(x, y, TIMER_ADJUST_RIGHT_X,
+                         TIMER_DECREASE_BUTTON_Y, TIMER_ADJUST_BUTTON_WIDTH,
+                         TIMER_ADJUST_BUTTON_HEIGHT)) {
     changeTimerDuration(-10);
-  } else if (pointInRect(x, y, 8, 158, 80, 27)) {
+  } else if (pointInRect(x, y, 8, TIMER_ACTION_BUTTON_Y, 80,
+                         TIMER_ACTION_BUTTON_HEIGHT)) {
     if (timerState == TimerState::Running ||
         timerState == TimerState::Expired) {
       stopOrConfirmTimer(now);
@@ -3737,6 +3783,11 @@ void handleTouch(int16_t x, int16_t y) {
         pressTimerButton(millis());
         return;
       }
+      if (timerModeActive() &&
+          pointInRect(x, y, 0, 0, CAT_PANEL_WIDTH, TIMER_PANEL_HEIGHT)) {
+        handleTimerTouch(x, y, millis());
+        return;
+      }
       if (pointInRect(x, y, 0,
 #if defined(BOARD_JC3248W535)
                       265, CAT_PANEL_WIDTH, 55
@@ -3760,11 +3811,7 @@ void handleTouch(int16_t x, int16_t y) {
                       195
 #endif
                       )) {
-        if (timerModeActive()) {
-          handleTimerTouch(x, y, millis());
-        } else {
-          chooseDifferentPet();
-        }
+        chooseDifferentPet();
         return;
       }
       handleHomeTouch(x, y);
