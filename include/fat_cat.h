@@ -5,7 +5,11 @@
 
 #include "pet_animation.h"
 
+#if defined(BOARD_JC3248W535)
+constexpr int16_t FAT_CAT_PANEL_WIDTH = 128;
+#else
 constexpr int16_t FAT_CAT_PANEL_WIDTH = 96;
+#endif
 #if defined(BOARD_JC3248W535)
 constexpr uint16_t FAT_CAT_FRAME_INTERVAL_MS = 67;
 #else

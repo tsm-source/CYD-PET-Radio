@@ -809,11 +809,11 @@ void drawAnimal(TFT_eSPI &frame, uint8_t index, int16_t bob,
   }
 
   if (dance == PetDance::Sway) {
-    frame.drawString("♪", 13 + sway[pose], 91, 2);
-    frame.drawString("♪", 79 - sway[pose], 112, 2);
+    drawPetMusicNote(frame, 13 + sway[pose], 91, TFT_CYAN);
+    drawPetMusicNote(frame, 79 - sway[pose], 112, TFT_YELLOW);
   } else if (dance == PetDance::Hop && pose % 3 == 0) {
-    frame.drawString("*", 12, 158, 2);
-    frame.drawString("*", 80, 151, 2);
+    drawPetSparkle(frame, 16, 166, TFT_YELLOW);
+    drawPetSparkle(frame, 84, 159, TFT_CYAN);
   } else if (pose % 6 == 0) {
     frame.fillCircle(14, 90, 2, TFT_YELLOW);
     frame.fillCircle(82, 108, 2, TFT_CYAN);

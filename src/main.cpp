@@ -51,7 +51,11 @@ constexpr uint8_t TOUCH_CALIBRATION_VERSION = 1;
 #endif
 constexpr int16_t CAT_PANEL_WIDTH = FAT_CAT_PANEL_WIDTH;
 constexpr int16_t PET_HEADER_HEIGHT = 32;
+#if defined(BOARD_JC3248W535)
+constexpr int16_t PET_ANIMATION_HEIGHT = 265 - PET_HEADER_HEIGHT;
+#else
 constexpr int16_t PET_ANIMATION_HEIGHT = 195 - PET_HEADER_HEIGHT;
+#endif
 #if defined(BOARD_JC3248W535)
 constexpr int16_t HOME_UI_LEFT = 132;
 constexpr int16_t HOME_UI_WIDTH = 336;
@@ -152,6 +156,13 @@ constexpr uint32_t TIMER_MUSIC_CUTOFF_MS = 5000;
 constexpr uint32_t TIMER_EXPIRED_DISPLAY_MS = 60000;
 constexpr int8_t AUDIO_BOOST_DB = 6;
 constexpr uint8_t AUDIO_AMP_ENABLE_PIN = 4;
+#if defined(BOARD_JC3248W535)
+constexpr uint8_t DISPLAY_BACKLIGHT_PIN = 1;
+constexpr uint8_t DISPLAY_BACKLIGHT_CHANNEL = 7;
+constexpr uint8_t DISPLAY_BRIGHTNESS_MIN = 10;
+constexpr uint8_t DISPLAY_BRIGHTNESS_MAX = 100;
+constexpr uint8_t DISPLAY_BRIGHTNESS_DEFAULT = 100;
+#endif
 constexpr char BERLIN_TIMEZONE[] = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 
 constexpr uint16_t PANEL = 0x18E3;
@@ -296,6 +307,9 @@ uint8_t stationCount = 0;
 uint8_t selectedStation = 0;
 uint8_t stationListPage = 0;
 uint8_t volume = 10;
+#if defined(BOARD_JC3248W535)
+uint8_t displayBrightness = DISPLAY_BRIGHTNESS_DEFAULT;
+#endif
 uint32_t timerDurationSeconds = DEFAULT_TIMER_SECONDS;
 uint32_t timerEndAt = 0;
 uint32_t timerPausedRemainingMs = 0;
@@ -1047,11 +1061,17 @@ void drawCatFrame(uint32_t now, bool pushFullFrame = false) {
                            PET_ANIMATION_HEIGHT, 0x0841);
     renderTarget->setViewport(0, PET_HEADER_HEIGHT, CAT_PANEL_WIDTH,
                               PET_ANIMATION_HEIGHT, false);
+#if defined(BOARD_JC3248W535)
+    renderTarget->setPetDrawingScale(true);
+#endif
     if (pet.drawingIndex < 0) {
       drawFatCat(*renderTarget, now, petDance, petOutfit);
     } else {
       drawPet(*renderTarget, now, pet, petDance, petOutfit);
     }
+#if defined(BOARD_JC3248W535)
+    renderTarget->setPetDrawingScale(false);
+#endif
     if (bubbleVisible) {
       drawSpeechBubble(*renderTarget,
                        bubbleTexts[bubblePetIndex][bubbleTextIndex]);
@@ -1326,6 +1346,37 @@ void setButtonColor(uint8_t index) {
   markUiDirty();
 }
 
+#if defined(BOARD_JC3248W535)
+void applyDisplayBrightness(uint8_t percent) {
+  const uint32_t duty =
+      static_cast<uint32_t>(percent) * 255 / DISPLAY_BRIGHTNESS_MAX;
+  ledcWrite(DISPLAY_BACKLIGHT_CHANNEL, duty);
+}
+
+void setDisplayBrightness(uint8_t percent) {
+  percent = constrain(percent, DISPLAY_BRIGHTNESS_MIN,
+                      DISPLAY_BRIGHTNESS_MAX);
+  if (percent == displayBrightness) {
+    return;
+  }
+
+  displayBrightness = percent;
+  applyDisplayBrightness(displayBrightness);
+  if (preferences.putUChar("brightness", displayBrightness) == 0) {
+    Serial.println("ERROR: could not save display brightness.");
+    setStatus("Could not save brightness");
+    return;
+  }
+  markUiDirty();
+}
+
+void initializeDisplayBacklight() {
+  ledcSetup(DISPLAY_BACKLIGHT_CHANNEL, 5000, 8);
+  ledcAttachPin(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_CHANNEL);
+  applyDisplayBrightness(displayBrightness);
+}
+#endif
+
 void drawText(const String &text, int16_t x, int16_t y, uint8_t font = 2,
               uint16_t colour = TFT_WHITE) {
   TFT_eSPI &display = *renderTarget;
@@ -1534,7 +1585,7 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
   drawHomeTextField(displayedHomeTitleSecond, titleLines.second, left + 8,
                     top + 51, TL_DATUM, 2, TEXT_MUTED);
   displayedHomeTitleSecond = titleLines.second;
-  drawHomeTextField(displayedHomeCodec, codecName, left + 8, top + 77,
+  drawHomeTextField(displayedHomeCodec, codecName, left + 8, top + 100,
                     TL_DATUM, 1, TEXT_MUTED);
 #else
   drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 7,
@@ -1743,7 +1794,18 @@ void drawDisplaySettings() {
         index == buttonColorIndex ? primaryTextColor() : 0x4208);
   }
 #if defined(BOARD_JC3248W535)
-  drawButton(UI_LEFT, 258, UI_WIDTH, 48, "RECALIBRATE TOUCHSCREEN",
+  display.drawString("BRIGHTNESS", UI_LEFT, 228, 2);
+  display.setTextDatum(TR_DATUM);
+  display.drawString(String(displayBrightness) + "%", UI_LEFT + UI_WIDTH,
+                     228, 2);
+  display.fillRoundRect(UI_LEFT, 247, UI_WIDTH, 10, 5,
+                        BUTTON_COLORS[buttonColorIndex]);
+  const int16_t brightnessWidth = static_cast<int16_t>(
+      (UI_WIDTH - 4) * (displayBrightness - DISPLAY_BRIGHTNESS_MIN) /
+      (DISPLAY_BRIGHTNESS_MAX - DISPLAY_BRIGHTNESS_MIN));
+  display.fillRoundRect(UI_LEFT + 2, 249, brightnessWidth, 6, 3, ACCENT);
+  display.fillCircle(UI_LEFT + 2 + brightnessWidth, 252, 8, TFT_WHITE);
+  drawButton(UI_LEFT, 270, UI_WIDTH, 38, "RECALIBRATE TOUCHSCREEN",
              PANEL_LIGHT, TFT_WHITE, 2, false);
 #else
   drawButton(UI_LEFT, 194, UI_WIDTH, 36, "RECALIBRATE TOUCHSCREEN",
@@ -3507,6 +3569,18 @@ void adjustVolumeFromTouch(int16_t x) {
   setVolume(newVolume);
 }
 
+#if defined(BOARD_JC3248W535)
+void adjustDisplayBrightnessFromTouch(int16_t x) {
+  const int16_t relativeX = constrain(x - UI_LEFT, 0, UI_WIDTH - 1);
+  const uint16_t brightnessRange =
+      DISPLAY_BRIGHTNESS_MAX - DISPLAY_BRIGHTNESS_MIN;
+  const uint8_t newBrightness = static_cast<uint8_t>(
+      DISPLAY_BRIGHTNESS_MIN +
+      (relativeX * brightnessRange + (UI_WIDTH - 1) / 2) / (UI_WIDTH - 1));
+  setDisplayBrightness(newBrightness);
+}
+#endif
+
 // Handle playback navigation and controls on the home screen.
 void handleHomeTouch(int16_t x, int16_t y) {
 #if defined(BOARD_JC3248W535)
@@ -3862,7 +3936,9 @@ void handleTouch(int16_t x, int16_t y) {
           }
         }
 #if defined(BOARD_JC3248W535)
-      } else if (pointInRect(x, y, UI_LEFT, 258, UI_WIDTH, 48)) {
+      } else if (pointInRect(x, y, UI_LEFT, 238, UI_WIDTH, 28)) {
+        adjustDisplayBrightnessFromTouch(x);
+      } else if (pointInRect(x, y, UI_LEFT, 270, UI_WIDTH, 38)) {
 #else
       } else if (pointInRect(x, y, UI_LEFT, 194, UI_WIDTH, 36)) {
 #endif
@@ -4117,6 +4193,14 @@ void setup() {
   wifiPassword = preferences.getString("password", "");
   Serial.println("Boot: preferences opened.");
   volume = min<uint8_t>(preferences.getUChar("volume", 10), 21);
+#if defined(BOARD_JC3248W535)
+  displayBrightness =
+      constrain(preferences.getUChar("brightness", DISPLAY_BRIGHTNESS_DEFAULT),
+                DISPLAY_BRIGHTNESS_MIN, DISPLAY_BRIGHTNESS_MAX);
+  ledcSetup(DISPLAY_BACKLIGHT_CHANNEL, 5000, 8);
+  ledcAttachPin(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_CHANNEL);
+  applyDisplayBrightness(displayBrightness);
+#endif
   audioBoost = preferences.getBool("boost", false);
 #if !defined(BOARD_JC3248W535)
   audioAmpEnabled = preferences.getBool("amp4", false);

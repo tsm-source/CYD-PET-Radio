@@ -103,6 +103,8 @@ class TFT_eSPI : public Arduino_Canvas {
     markDirty(0, 0, coordinateWidth(), coordinateHeight());
   }
 
+  void setPetDrawingScale(bool enabled) { petDrawingScale_ = enabled; }
+
   int16_t textWidth(const String &text, uint8_t font = 1) const {
     return text.length() * 6 * effectiveTextSize(font);
   }
@@ -161,10 +163,13 @@ class TFT_eSPI : public Arduino_Canvas {
     if (!insideViewport(x, y)) {
       return;
     }
-    const int16_t left = transformX(x);
-    const int16_t top = transformY(y);
-    const int16_t right = transformX(x + 1);
-    const int16_t bottom = transformY(y + 1);
+    const int16_t left = max<int16_t>(clipLeft_, transformX(x));
+    const int16_t top = max<int16_t>(clipTop_, transformY(y));
+    const int16_t right = min<int16_t>(clipRight_, transformX(x + 1));
+    const int16_t bottom = min<int16_t>(clipBottom_, transformY(y + 1));
+    if (right <= left || bottom <= top) {
+      return;
+    }
     markDirty(x, y, x + 1, y + 1);
     Arduino_Canvas::writeFillRectPreclipped(left, top, right - left,
                                             bottom - top, color);
@@ -180,12 +185,17 @@ class TFT_eSPI : public Arduino_Canvas {
     if (right <= left) {
       return;
     }
-    const int16_t nativeLeft = transformX(left);
-    const int16_t nativeTop = transformY(y);
+    const int16_t nativeLeft = max<int16_t>(clipLeft_, transformX(left));
+    const int16_t nativeTop = max<int16_t>(clipTop_, transformY(y));
+    const int16_t nativeRight = min<int16_t>(clipRight_, transformX(right));
+    const int16_t nativeBottom = min<int16_t>(clipBottom_, transformY(y + 1));
+    if (nativeRight <= nativeLeft || nativeBottom <= nativeTop) {
+      return;
+    }
     markDirty(left, y, right, y + 1);
     Arduino_Canvas::writeFillRectPreclipped(
-        nativeLeft, nativeTop, transformX(right) - nativeLeft,
-        transformY(y + 1) - nativeTop, color);
+        nativeLeft, nativeTop, nativeRight - nativeLeft,
+        nativeBottom - nativeTop, color);
   }
 
   void writeFastVLine(int16_t x, int16_t y, int16_t height,
@@ -198,12 +208,17 @@ class TFT_eSPI : public Arduino_Canvas {
     if (bottom <= top) {
       return;
     }
-    const int16_t nativeLeft = transformX(x);
-    const int16_t nativeTop = transformY(top);
+    const int16_t nativeLeft = max<int16_t>(clipLeft_, transformX(x));
+    const int16_t nativeTop = max<int16_t>(clipTop_, transformY(top));
+    const int16_t nativeRight = min<int16_t>(clipRight_, transformX(x + 1));
+    const int16_t nativeBottom = min<int16_t>(clipBottom_, transformY(bottom));
+    if (nativeRight <= nativeLeft || nativeBottom <= nativeTop) {
+      return;
+    }
     markDirty(x, top, x + 1, bottom);
     Arduino_Canvas::writeFillRectPreclipped(
-        nativeLeft, nativeTop, transformX(x + 1) - nativeLeft,
-        transformY(bottom) - nativeTop, color);
+        nativeLeft, nativeTop, nativeRight - nativeLeft,
+        nativeBottom - nativeTop, color);
   }
 
   void writeFillRectPreclipped(int16_t x, int16_t y, int16_t width,
@@ -221,12 +236,17 @@ class TFT_eSPI : public Arduino_Canvas {
     if (right <= left || bottom <= top) {
       return;
     }
-    const int16_t nativeLeft = transformX(left);
-    const int16_t nativeTop = transformY(top);
+    const int16_t nativeLeft = max<int16_t>(clipLeft_, transformX(left));
+    const int16_t nativeTop = max<int16_t>(clipTop_, transformY(top));
+    const int16_t nativeRight = min<int16_t>(clipRight_, transformX(right));
+    const int16_t nativeBottom = min<int16_t>(clipBottom_, transformY(bottom));
+    if (nativeRight <= nativeLeft || nativeBottom <= nativeTop) {
+      return;
+    }
     markDirty(left, top, right, bottom);
     Arduino_Canvas::writeFillRectPreclipped(
-        nativeLeft, nativeTop, transformX(right) - nativeLeft,
-        transformY(bottom) - nativeTop, color);
+        nativeLeft, nativeTop, nativeRight - nativeLeft,
+        nativeBottom - nativeTop, color);
   }
 
   bool flushFrame(void (*serviceAudio)() = nullptr) {
@@ -294,11 +314,17 @@ class TFT_eSPI : public Arduino_Canvas {
   }
 
   int16_t transformX(int32_t x) const {
+    if (petDrawingScale_) {
+      return static_cast<int16_t>((x * 4 + 1) / 3);
+    }
     return nativeCoordinates_ ? static_cast<int16_t>(x)
                               : jc3248w535::scaleX(x);
   }
 
   int16_t transformY(int32_t y) const {
+    if (petDrawingScale_) {
+      return static_cast<int16_t>((y * 4 + 1) / 3);
+    }
     return nativeCoordinates_ ? static_cast<int16_t>(y)
                               : jc3248w535::scaleY(y);
   }
@@ -341,6 +367,7 @@ class TFT_eSPI : public Arduino_Canvas {
   int32_t dirtyBottom_ = 0;
   bool dirty_ = false;
   bool nativeCoordinates_ = false;
+  bool petDrawingScale_ = false;
   uint32_t lastFlushCopyTimeUs_ = 0;
   uint32_t lastFlushTransferTimeUs_ = 0;
   uint32_t lastFlushAudioTimeUs_ = 0;

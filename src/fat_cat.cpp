@@ -97,14 +97,13 @@ void drawFatCat(TFT_eSPI &frameBuffer, uint32_t now, PetDance dance,
 
   drawPetClothing(frameBuffer, 5, outfit, bob);
   if (dance == PetDance::Sway) {
-    frameBuffer.drawString("♪", 15 + sway[pose], 90, 2);
-    frameBuffer.drawString("♪", 75 - sway[pose], 115, 2);
+    drawPetMusicNote(frameBuffer, 15 + sway[pose], 90, TFT_CYAN);
+    drawPetMusicNote(frameBuffer, 75 - sway[pose], 115, TFT_YELLOW);
   } else if (dance == PetDance::Hop && pose % 3 == 0) {
-    frameBuffer.drawString("*", 12, 158, 2);
-    frameBuffer.drawString("*", 80, 151, 2);
+    drawPetSparkle(frameBuffer, 16, 166, TFT_YELLOW);
+    drawPetSparkle(frameBuffer, 84, 159, TFT_CYAN);
   }
 
-  frameBuffer.setTextColor(TFT_YELLOW, PANEL_COLOUR);
-  frameBuffer.drawString("*", 13, 73 + bob, 2);
-  frameBuffer.drawString("*", 82, 56 - bob, 2);
+  drawPetSparkle(frameBuffer, 17, 80 + bob, TFT_YELLOW);
+  drawPetSparkle(frameBuffer, 82, 63 - bob, TFT_YELLOW);
 }

@@ -13,23 +13,25 @@ constexpr uint8_t AUDIO_BLOCK_COUNT = 3;
 constexpr uint8_t SPECTRUM_BANDS = 8;
 #if defined(BOARD_JC3248W535)
 constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 67;
-constexpr uint8_t SPECTRUM_EASING_STEP = 8;
-#else
-constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 250;
-constexpr uint8_t SPECTRUM_EASING_STEP = 3;
-#endif
-constexpr uint32_t AUDIO_STALE_MS = 300;
-#if defined(BOARD_JC3248W535)
+constexpr uint32_t AUDIO_STALE_MS = 1200;
+constexpr uint8_t SPECTRUM_ATTACK_STEP = 8;
+constexpr uint8_t SPECTRUM_RELEASE_STEP = 2;
 constexpr int16_t SPECTRUM_BASELINE = 312;
 constexpr int16_t SPECTRUM_TOP = 265;
 constexpr int16_t SPECTRUM_HEIGHT = 55;
+constexpr int16_t SPECTRUM_MAX_HEIGHT = 44;
 #else
+constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 250;
+constexpr uint32_t AUDIO_STALE_MS = 300;
+constexpr uint8_t SPECTRUM_ATTACK_STEP = 3;
+constexpr uint8_t SPECTRUM_RELEASE_STEP = 3;
 constexpr int16_t SPECTRUM_BASELINE = 238;
 constexpr int16_t SPECTRUM_TOP = 195;
 constexpr int16_t SPECTRUM_HEIGHT = 45;
-#endif
 constexpr int16_t SPECTRUM_MAX_HEIGHT = 32;
-constexpr float TILT_DB_PER_OCTAVE = 4.5f;
+#endif
+constexpr float TILT_DB_PER_OCTAVE = 6.0f;
+constexpr float MIN_ANALYZABLE_MAGNITUDE = 0.0001f;
 
 struct AudioBlock {
   int16_t samples[FFT_SIZE];
@@ -133,10 +135,8 @@ void analyzeBlock(const AudioBlock &block) {
     const float centreBin =
         sqrtf(static_cast<float>(firstBin) * static_cast<float>(endBin));
     const float decibels =
-        magnitude > 0.001f
-            ? 20.0f * log10f(magnitude) +
-                  TILT_DB_PER_OCTAVE * log2f(centreBin / BAND_EDGES[0])
-            : -60.0f;
+        20.0f * log10f(max(magnitude, MIN_ANALYZABLE_MAGNITUDE)) +
+        TILT_DB_PER_OCTAVE * log2f(centreBin / BAND_EDGES[0]);
     bandDecibels[band] = decibels;
     loudestDecibels = max(loudestDecibels, decibels);
   }
@@ -255,8 +255,13 @@ void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
     }
   }
 
+#if defined(BOARD_JC3248W535)
+  constexpr int16_t BAR_WIDTH = 10;
+  constexpr int16_t BAR_GAP = 6;
+#else
   constexpr int16_t BAR_WIDTH = 7;
   constexpr int16_t BAR_GAP = 4;
+#endif
   constexpr int16_t TOTAL_WIDTH =
       SPECTRUM_BANDS * BAR_WIDTH + (SPECTRUM_BANDS - 1) * BAR_GAP;
   constexpr int16_t START_X = (FAT_CAT_PANEL_WIDTH - TOTAL_WIDTH) / 2;
@@ -265,10 +270,11 @@ void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
     displayedHeights[band] =
         target > displayedHeights[band]
             ? min<uint8_t>(target,
-                           displayedHeights[band] + SPECTRUM_EASING_STEP)
+                           displayedHeights[band] + SPECTRUM_ATTACK_STEP)
             : max<uint8_t>(target,
-                           displayedHeights[band] > SPECTRUM_EASING_STEP
-                               ? displayedHeights[band] - SPECTRUM_EASING_STEP
+                           displayedHeights[band] > SPECTRUM_RELEASE_STEP
+                               ? displayedHeights[band] -
+                                     SPECTRUM_RELEASE_STEP
                                : target);
 
     const uint8_t height = displayedHeights[band];
