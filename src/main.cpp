@@ -325,6 +325,7 @@ String streamStation;
 String displayedHomeStation;
 String displayedHomeTitleFirst;
 String displayedHomeTitleSecond;
+String displayedHomeTitleThird;
 String displayedHomeCodec;
 String displayedHomeBitrate;
 String statusMessage = "Set up Wi-Fi";
@@ -1093,13 +1094,17 @@ String fittedText(const String &source, int16_t maxWidth, uint8_t font = 2) {
 struct TwoLineText {
   String first;
   String second;
+  String third;
 };
 
 TwoLineText wrappedText(const String &source, int16_t maxWidth,
-                        uint8_t font = 2) {
+                        uint8_t font = 2, uint8_t maxLines = 2) {
   TwoLineText lines;
   String remaining = source;
-  for (uint8_t line = 0; line < 2 && !remaining.isEmpty(); ++line) {
+  for (uint8_t line = 0; line < maxLines && !remaining.isEmpty(); ++line) {
+    String *currentLine = line == 0   ? &lines.first
+                          : line == 1 ? &lines.second
+                                      : &lines.third;
     int16_t fitLength = remaining.length();
     while (fitLength > 0 &&
            renderTarget->textWidth(remaining.substring(0, fitLength), font) >
@@ -1108,12 +1113,11 @@ TwoLineText wrappedText(const String &source, int16_t maxWidth,
     }
 
     if (fitLength == remaining.length()) {
-      (line == 0 ? lines.first : lines.second) = remaining;
+      *currentLine = remaining;
       break;
     }
     if (fitLength == 0) {
-      (line == 0 ? lines.first : lines.second) =
-          fittedText(remaining, maxWidth, font);
+      *currentLine = fittedText(remaining, maxWidth, font);
       break;
     }
 
@@ -1121,14 +1125,13 @@ TwoLineText wrappedText(const String &source, int16_t maxWidth,
     if (splitAt <= 0) {
       splitAt = fitLength;
     }
-    (line == 0 ? lines.first : lines.second) =
-        remaining.substring(0, splitAt);
+    *currentLine = remaining.substring(0, splitAt);
     remaining = remaining.substring(splitAt);
     while (remaining.startsWith(" ")) {
       remaining.remove(0, 1);
     }
-    if (line == 1 && !remaining.isEmpty()) {
-      lines.second = fittedText(lines.second + " " + remaining, maxWidth, font);
+    if (line == maxLines - 1 && !remaining.isEmpty()) {
+      *currentLine = fittedText(*currentLine + " " + remaining, maxWidth, font);
     }
   }
   return lines;
@@ -1533,18 +1536,23 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
                         ? (streamStation.isEmpty() ? statusMessage
                                                    : streamStation)
                         : streamTitle;
-  const TwoLineText titleLines =
-      wrappedText(subtitle, UI_WIDTH - 14, 2);
 #if defined(BOARD_JC3248W535)
+  const TwoLineText titleLines =
+      wrappedText(subtitle, UI_WIDTH - 14, 2, 3);
   drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 8,
                     top + 29, TL_DATUM, 2, TEXT_MUTED);
   displayedHomeTitleFirst = titleLines.first;
   drawHomeTextField(displayedHomeTitleSecond, titleLines.second, left + 8,
                     top + 51, TL_DATUM, 2, TEXT_MUTED);
   displayedHomeTitleSecond = titleLines.second;
+  drawHomeTextField(displayedHomeTitleThird, titleLines.third, left + 8,
+                    top + 73, TL_DATUM, 2, TEXT_MUTED);
+  displayedHomeTitleThird = titleLines.third;
   drawHomeTextField(displayedHomeCodec, codecName, left + 8, top + 100,
                     TL_DATUM, 1, TEXT_MUTED);
 #else
+  const TwoLineText titleLines =
+      wrappedText(subtitle, UI_WIDTH - 14, 2);
   drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 7,
                     top + 22, TL_DATUM, 2, TEXT_MUTED);
   displayedHomeTitleFirst = titleLines.first;
