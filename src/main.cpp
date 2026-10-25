@@ -11,6 +11,7 @@
 #endif
 #include <WiFi.h>
 #include <Audio.h>
+#include <driver/i2s.h>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <math.h>
@@ -275,6 +276,20 @@ Audio radioAudio;
 #else
 Audio radioAudio(true, I2S_DAC_CHANNEL_LEFT_EN);
 #endif
+#if defined(BOARD_JC3248W535)
+constexpr uint32_t RADIO_AUDIO_TASK_STACK_SIZE = 8192;
+constexpr UBaseType_t RADIO_AUDIO_TASK_PRIORITY = 4;
+constexpr BaseType_t RADIO_AUDIO_TASK_CORE = 0;
+SemaphoreHandle_t radioAudioMutex = nullptr;
+TaskHandle_t radioAudioTaskHandle = nullptr;
+portMUX_TYPE audioCallbackMux = portMUX_INITIALIZER_UNLOCKED;
+char pendingStationName[128]{};
+char pendingStreamTitle[192]{};
+char pendingStreamEnd[128]{};
+bool pendingStationNameUpdate = false;
+bool pendingStreamTitleUpdate = false;
+bool pendingStreamEndUpdate = false;
+#endif
 
 Station stations[MAX_STATIONS]{};
 uint8_t stationCount = 0;
@@ -355,7 +370,9 @@ uint32_t lastCatFrameAt = 0;
 #if defined(BOARD_JC3248W535)
 uint32_t lastAnimationStatsAt = 0;
 uint32_t animationRenderTimeUs = 0;
-uint32_t animationFlushTimeUs = 0;
+uint32_t animationCopyTimeUs = 0;
+uint32_t animationTransferTimeUs = 0;
+uint32_t animationPixelCount = 0;
 uint16_t animationFrameCount = 0;
 uint16_t animationFlushCount = 0;
 #endif
@@ -386,6 +403,181 @@ void showStationPageFor(uint8_t index);
 
 bool timerModeActive() { return timerState != TimerState::Inactive; }
 
+#if defined(BOARD_JC3248W535)
+bool lockRadioAudio() {
+  if (radioAudioMutex == nullptr ||
+      xSemaphoreTake(radioAudioMutex, portMAX_DELAY) != pdTRUE) {
+    Serial.println("ERROR: could not lock the radio audio instance.");
+    return false;
+  }
+  return true;
+}
+
+void radioAudioTask(void *) {
+  for (;;) {
+    if (xSemaphoreTake(radioAudioMutex, portMAX_DELAY) == pdTRUE) {
+      radioAudio.loop();
+      xSemaphoreGive(radioAudioMutex);
+    }
+    vTaskDelay(1);
+  }
+}
+
+bool startRadioAudioTask() {
+  radioAudioMutex = xSemaphoreCreateMutex();
+  if (radioAudioMutex == nullptr) {
+    Serial.println("ERROR: could not create the radio audio mutex.");
+    return false;
+  }
+  const BaseType_t result =
+      xTaskCreatePinnedToCore(radioAudioTask, "radioAudio",
+                              RADIO_AUDIO_TASK_STACK_SIZE, nullptr,
+                              RADIO_AUDIO_TASK_PRIORITY,
+                              &radioAudioTaskHandle, RADIO_AUDIO_TASK_CORE);
+  if (result != pdPASS) {
+    Serial.println("ERROR: could not create the radio audio task.");
+    vSemaphoreDelete(radioAudioMutex);
+    radioAudioMutex = nullptr;
+    return false;
+  }
+  Serial.printf("Radio audio task started on core %d (priority %u).\n",
+                RADIO_AUDIO_TASK_CORE, RADIO_AUDIO_TASK_PRIORITY);
+  return true;
+}
+
+void stopRadioSong() {
+  if (lockRadioAudio()) {
+    radioAudio.stopSong();
+    xSemaphoreGive(radioAudioMutex);
+  }
+}
+
+void setRadioVolume(uint8_t value) {
+  if (lockRadioAudio()) {
+    radioAudio.setVolume(value);
+    xSemaphoreGive(radioAudioMutex);
+  }
+}
+
+void setRadioTone(int8_t low, int8_t mid, int8_t high) {
+  if (lockRadioAudio()) {
+    radioAudio.setTone(low, mid, high);
+    xSemaphoreGive(radioAudioMutex);
+  }
+}
+
+bool connectRadioToHost(const char *url) {
+  if (!lockRadioAudio()) {
+    return false;
+  }
+  const bool connected = radioAudio.connecttohost(url);
+  xSemaphoreGive(radioAudioMutex);
+  return connected;
+}
+
+int radioCodec() {
+  if (!lockRadioAudio()) {
+    return 0;
+  }
+  const int codec = radioAudio.getCodec();
+  xSemaphoreGive(radioAudioMutex);
+  return codec;
+}
+
+uint32_t radioBitRate() {
+  if (!lockRadioAudio()) {
+    return 0;
+  }
+  const uint32_t bitRate = radioAudio.getBitRate();
+  xSemaphoreGive(radioAudioMutex);
+  return bitRate;
+}
+
+const char *radioCodecName() {
+  if (!lockRadioAudio()) {
+    return "";
+  }
+  const char *name = radioAudio.getCodecname();
+  xSemaphoreGive(radioAudioMutex);
+  return name;
+}
+
+i2s_port_t radioI2sPort() {
+  if (!lockRadioAudio()) {
+    return I2S_NUM_0;
+  }
+  const i2s_port_t port = static_cast<i2s_port_t>(radioAudio.getI2sPort());
+  xSemaphoreGive(radioAudioMutex);
+  return port;
+}
+
+void applyPendingAudioCallbacks() {
+  char station[sizeof(pendingStationName)];
+  char title[sizeof(pendingStreamTitle)];
+  char streamEnd[sizeof(pendingStreamEnd)];
+  bool stationChanged = false;
+  bool titleChanged = false;
+  bool streamEnded = false;
+  portENTER_CRITICAL(&audioCallbackMux);
+  stationChanged = pendingStationNameUpdate;
+  titleChanged = pendingStreamTitleUpdate;
+  streamEnded = pendingStreamEndUpdate;
+  if (stationChanged) {
+    strlcpy(station, pendingStationName, sizeof(station));
+    pendingStationNameUpdate = false;
+  }
+  if (titleChanged) {
+    strlcpy(title, pendingStreamTitle, sizeof(title));
+    pendingStreamTitleUpdate = false;
+  }
+  if (streamEnded) {
+    strlcpy(streamEnd, pendingStreamEnd, sizeof(streamEnd));
+    pendingStreamEndUpdate = false;
+  }
+  portEXIT_CRITICAL(&audioCallbackMux);
+
+  if (stationChanged) {
+    streamStation = station;
+    audioDirty = true;
+    Serial.printf("station: %s\n", station);
+  }
+  if (titleChanged) {
+    streamTitle = title;
+    audioDirty = true;
+    Serial.printf("stream title: %s\n", title);
+  }
+  if (streamEnded) {
+    if (!streamActive) {
+      Serial.printf("audio: ignoring stream end before successful connection "
+                    "(%s)\n",
+                    streamEnd);
+    } else {
+      streamActive = false;
+      streamRestartPending = true;
+      streamRestartAt = millis();
+      setStatus("Stream ended");
+      Serial.printf("audio: stream ended (%s)\n", streamEnd);
+    }
+  }
+}
+#else
+void stopRadioSong() { radioAudio.stopSong(); }
+void setRadioVolume(uint8_t value) { radioAudio.setVolume(value); }
+void setRadioTone(int8_t low, int8_t mid, int8_t high) {
+  radioAudio.setTone(low, mid, high);
+}
+bool connectRadioToHost(const char *url) {
+  return radioAudio.connecttohost(url);
+}
+int radioCodec() { return radioAudio.getCodec(); }
+uint32_t radioBitRate() { return radioAudio.getBitRate(); }
+const char *radioCodecName() { return radioAudio.getCodecname(); }
+i2s_port_t radioI2sPort() {
+  return static_cast<i2s_port_t>(radioAudio.getI2sPort());
+}
+void applyPendingAudioCallbacks() {}
+#endif
+
 // Return the duration currently shown, accounting for ready, paused, and
 // running states while keeping the countdown safe across millis() rollover.
 uint32_t timerRemainingMs(uint32_t now) {
@@ -409,7 +601,7 @@ void exitTimerMode(uint32_t now) {
   timerState = TimerState::Inactive;
   timerMusicStopped = false;
   timerShouldResumeMusic = false;
-  stopTimerAlarm(radioAudio);
+  stopTimerAlarm(radioI2sPort());
   lastPetChangeAt = now;
   petAnimationInitialized = false;
   petTransition = PetTransition::Entering;
@@ -430,7 +622,7 @@ void stopMusicForTimer() {
   streamRestartPending = false;
   if (streamActive) {
     timerShouldResumeMusic = true;
-    radioAudio.stopSong();
+    stopRadioSong();
     streamActive = false;
     streamTitle = "";
     streamStation = "";
@@ -458,7 +650,7 @@ void expireTimer(uint32_t now) {
   stopMusicForTimer();
   timerState = TimerState::Expired;
   timerExpiredAt = now;
-  if (!startTimerAlarm(radioAudio, volume) && volume > 0) {
+  if (!startTimerAlarm(radioI2sPort(), volume) && volume > 0) {
     setStatus("Timer finished; alarm audio unavailable");
   } else {
     setStatus("Timer finished");
@@ -540,12 +732,6 @@ void chooseDifferentPet() {
   selectedPetIndex = nextIndex;
 }
 
-// Select another pet and reset the automatic rotation deadline.
-void chooseDifferentPet(uint32_t now) {
-  chooseDifferentPet();
-  lastPetChangeAt = now;
-}
-
 // Choose another bubble message so successive appearances are not repetitive.
 void chooseDifferentBubbleText() {
   uint8_t nextIndex = esp_random() % 9;
@@ -601,6 +787,8 @@ void updatePetAnimation(uint32_t now) {
     if (displayedPetIndex != wantedPetIndex) {
       petTransition = PetTransition::Exiting;
       petTransitionStartedAt = now;
+    } else {
+      lastPetChangeAt = now;
     }
   } else if (petTransition == PetTransition::Idle) {
     if (displayedPetIndex != wantedPetIndex) {
@@ -1309,15 +1497,14 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
   const int16_t top = 36 - originY;
 #endif
   const bool connected = WiFi.status() == WL_CONNECTED;
-  const int codecId =
-      connected && streamActive ? radioAudio.getCodec() : 0;
+  const int codecId = connected && streamActive ? radioCodec() : 0;
   const uint32_t bitrateKbps =
-      connected && streamActive ? (radioAudio.getBitRate() + 500) / 1000 : 0;
+      connected && streamActive ? (radioBitRate() + 500) / 1000 : 0;
   const char *codecName = "";
   if (codecId == 9) {
     codecName = "AAC";
   } else if (codecId > 0 && codecId < 9) {
-    codecName = radioAudio.getCodecname();
+    codecName = radioCodecName();
   }
 
   display.setTextDatum(TL_DATUM);
@@ -1382,7 +1569,7 @@ void drawHomeBitrate(const String &bitrateText, int16_t originX,
 void refreshHomeBitrate() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   const uint32_t bitrateKbps =
-      connected && streamActive ? (radioAudio.getBitRate() + 500) / 1000 : 0;
+      connected && streamActive ? (radioBitRate() + 500) / 1000 : 0;
   const String bitrateText =
       bitrateKbps == 0 ? "-- kbit/s" : String(bitrateKbps) + " kbit/s";
   renderTarget = &display;
@@ -2342,7 +2529,7 @@ void calibrateTouchscreen() {
 #endif
   }
 #if defined(BOARD_JC3248W535)
-  display.setNativeCoordinates(currentScreen == Screen::Home);
+  display.setNativeCoordinates(true);
 #endif
 }
 
@@ -2780,7 +2967,7 @@ void loadStations() {
 // Apply a bounded volume setting to the decoder and save it to preferences.
 void setVolume(uint8_t newVolume) {
   volume = min<uint8_t>(newVolume, 21);
-  radioAudio.setVolume(volume);
+  setRadioVolume(volume);
   if (!saveVolume()) {
     setStatus("Could not save volume");
   } else {
@@ -2792,7 +2979,7 @@ void setVolume(uint8_t newVolume) {
 void setAudioBoost(bool enabled) {
   audioBoost = enabled;
   const int8_t gain = audioBoost ? AUDIO_BOOST_DB : 0;
-  radioAudio.setTone(gain, gain, gain);
+  setRadioTone(gain, gain, gain);
   if (preferences.putBool("boost", audioBoost) == 0) {
     Serial.println("ERROR: could not save audio boost setting.");
     setStatus("Could not save audio boost");
@@ -2876,8 +3063,8 @@ void startStream() {
   streamStation = "";
   streamRestartPending = false;
   streamActive = false;
-  radioAudio.stopSong();
-  radioAudio.setVolume(volume);
+  stopRadioSong();
+  setRadioVolume(volume);
   startAudioFadeIn();
   char stationUrl[STATION_URL_SIZE];
   if (!loadStationUrl(selectedStation, stationUrl, sizeof(stationUrl))) {
@@ -2897,7 +3084,7 @@ void startStream() {
       selectedStation + 1, static_cast<unsigned>(internalFreeHeap),
       static_cast<unsigned>(internalLargestBlock),
       static_cast<unsigned>(ESP.getPsramSize()));
-  if (!radioAudio.connecttohost(stationUrl)) {
+  if (!connectRadioToHost(stationUrl)) {
     streamActive = false;
     setStatus("Could not start stream");
     Serial.printf("ERROR: could not connect to station %u.\n",
@@ -2935,7 +3122,7 @@ void beginWifiConnection() {
     setStatus("Enter an SSID first");
     return;
   }
-  radioAudio.stopSong();
+  stopRadioSong();
   streamActive = false;
   startWifiConnection();
 }
@@ -3285,7 +3472,7 @@ void deleteStation(uint8_t index) {
     streamActive = false;
     streamTitle = "";
     streamStation = "";
-    radioAudio.stopSong();
+    stopRadioSong();
   } else if (index < selectedStation) {
     --selectedStation;
   } else if (index == selectedStation && selectedStation >= stationCount) {
@@ -3331,7 +3518,7 @@ void handleHomeTouch(int16_t x, int16_t y) {
   } else if (pointInRect(x, y, UI_LEFT + HOME_PLAY_X, HOME_PLAYBACK_Y,
                          HOME_PLAY_WIDTH, HOME_PLAYBACK_HEIGHT)) {
     if (streamActive) {
-      radioAudio.stopSong();
+      stopRadioSong();
       streamActive = false;
       setStatus("Paused");
     } else {
@@ -3363,7 +3550,7 @@ void handleHomeTouch(int16_t x, int16_t y) {
     }
   } else if (pointInRect(x, y, UI_LEFT + 55, 105, 100, 36)) {
     if (streamActive) {
-      radioAudio.stopSong();
+      stopRadioSong();
       streamActive = false;
       setStatus("Paused");
     } else {
@@ -3562,7 +3749,7 @@ void handleTouch(int16_t x, int16_t y) {
         if (timerModeActive()) {
           handleTimerTouch(x, y, millis());
         } else {
-          chooseDifferentPet(millis());
+          chooseDifferentPet();
         }
         return;
       }
@@ -3786,20 +3973,40 @@ void audio_info(const char *info) {
 
 // Audio-library callback for the station name currently being decoded.
 void audio_showstation(const char *info) {
+#if defined(BOARD_JC3248W535)
+  portENTER_CRITICAL(&audioCallbackMux);
+  strlcpy(pendingStationName, info, sizeof(pendingStationName));
+  pendingStationNameUpdate = true;
+  portEXIT_CRITICAL(&audioCallbackMux);
+#else
   streamStation = info;
   audioDirty = true;
   Serial.printf("station: %s\n", info);
+#endif
 }
 
 // Audio-library callback for the current stream title.
 void audio_showstreamtitle(const char *info) {
+#if defined(BOARD_JC3248W535)
+  portENTER_CRITICAL(&audioCallbackMux);
+  strlcpy(pendingStreamTitle, info, sizeof(pendingStreamTitle));
+  pendingStreamTitleUpdate = true;
+  portEXIT_CRITICAL(&audioCallbackMux);
+#else
   streamTitle = info;
   audioDirty = true;
   Serial.printf("stream title: %s\n", info);
+#endif
 }
 
 // Schedule a delayed reconnect when the decoder reports end of stream.
 void audio_eof_stream(const char *info) {
+#if defined(BOARD_JC3248W535)
+  portENTER_CRITICAL(&audioCallbackMux);
+  strlcpy(pendingStreamEnd, info, sizeof(pendingStreamEnd));
+  pendingStreamEndUpdate = true;
+  portEXIT_CRITICAL(&audioCallbackMux);
+#else
   if (!streamActive) {
     Serial.printf("audio: ignoring stream end before successful connection (%s)\n",
                   info);
@@ -3810,6 +4017,7 @@ void audio_eof_stream(const char *info) {
   streamRestartAt = millis();
   setStatus("Stream ended");
   Serial.printf("audio: stream ended (%s)\n", info);
+#endif
 }
 
 // Initialize hardware, restore settings, calibrate touch, and start networking.
@@ -3995,8 +4203,7 @@ void setup() {
   }
 #endif
 
-  // Without PSRAM the library defaults to ~6 KB, which underruns whenever the
-  // display refresh delays radioAudio.loop().
+  // Give the audio library enough input buffering for network jitter.
 #if defined(BOARD_JC3248W535)
   radioAudio.setBufsize(AUDIO_INPUT_BUFFER_BYTES, AUDIO_PSRAM_BUFFER_BYTES);
 #else
@@ -4012,6 +4219,13 @@ void setup() {
   const int8_t audioGain = audioBoost ? AUDIO_BOOST_DB : 0;
   radioAudio.setTone(audioGain, audioGain, audioGain);
   radioAudio.setVolume(volume);
+#if defined(BOARD_JC3248W535)
+  if (!startRadioAudioTask()) {
+    while (true) {
+      delay(1000);
+    }
+  }
+#endif
   WiFi.mode(WIFI_STA);
   configTzTime(BERLIN_TIMEZONE, "pool.ntp.org", "time.google.com");
   WiFi.setSleep(false);
@@ -4034,7 +4248,9 @@ void setup() {
 
 // Service audio, networking, timer, animation, and display work continuously.
 void loop() {
-  radioAudio.loop();
+#if defined(BOARD_JC3248W535)
+  applyPendingAudioCallbacks();
+#endif
   updateNetwork();
 
   int16_t x = 0;
@@ -4055,8 +4271,14 @@ void loop() {
     startStream();
   }
   if (!timerModeActive()) {
-    if (now - lastPetChangeAt >= RANDOM_PET_INTERVAL_MS) {
-      chooseDifferentPet(now);
+    if (petTransition == PetTransition::Idle &&
+        displayedPetIndex == selectedPetIndex &&
+        now - lastPetChangeAt >= RANDOM_PET_INTERVAL_MS) {
+      const uint32_t petIntervalMs = now - lastPetChangeAt;
+      chooseDifferentPet();
+      Serial.printf("Pet: changing to %s after %lu ms.\n",
+                    petList[selectedPetIndex].animalName,
+                    static_cast<unsigned long>(petIntervalMs));
     }
     updatePetAnimation(now);
     updateBubbleText(now);
@@ -4071,11 +4293,11 @@ void loop() {
     lastBitrateUpdateAt = now;
     const uint32_t bitrateKbps =
         WiFi.status() == WL_CONNECTED && streamActive
-            ? (radioAudio.getBitRate() + 500) / 1000
+            ? (radioBitRate() + 500) / 1000
             : 0;
     const int codecId =
         WiFi.status() == WL_CONNECTED && streamActive
-            ? radioAudio.getCodec()
+            ? radioCodec()
             : 0;
     if (bitrateKbps != lastDisplayedBitrateKbps ||
         codecId != lastDisplayedCodec) {
@@ -4134,11 +4356,11 @@ void loop() {
   }
 #endif
 #if defined(BOARD_JC3248W535)
-  const uint32_t flushStartedAt = micros();
-  display.flushFrame([]() { radioAudio.loop(); });
-  const uint32_t flushDurationUs = micros() - flushStartedAt;
-  if (flushDurationUs >= 500) {
-    animationFlushTimeUs += flushDurationUs;
+  display.flushFrame();
+  if (display.lastFlushPixelCount() > 0) {
+    animationCopyTimeUs += display.lastFlushCopyTimeUs();
+    animationTransferTimeUs += display.lastFlushTransferTimeUs();
+    animationPixelCount += display.lastFlushPixelCount();
     ++animationFlushCount;
   }
   const uint32_t statsNow = millis();
@@ -4153,28 +4375,43 @@ void loop() {
           animationFrameCount == 0
               ? 0
               : animationRenderTimeUs / animationFrameCount / 1000;
-      const uint32_t averageFlushMs =
+      const uint32_t averageCopyMs =
           animationFlushCount == 0
               ? 0
-              : animationFlushTimeUs / animationFlushCount / 1000;
+              : animationCopyTimeUs / animationFlushCount / 1000;
+      const uint32_t averageTransferMs =
+          animationFlushCount == 0
+              ? 0
+              : animationTransferTimeUs / animationFlushCount / 1000;
+      const uint32_t averagePixelCount =
+          animationFlushCount == 0
+              ? 0
+              : animationPixelCount / animationFlushCount;
       Serial.printf(
-          "Animation: %lu fps; render avg %lu ms; display flush avg %lu ms; "
-          "audio %s; spectrum %s.\n",
+          "Animation: %lu fps; render avg %lu ms; pack avg %lu ms; QSPI avg "
+          "%lu ms; update avg %lu px; pet %s; audio %s; spectrum %s.\n",
           static_cast<unsigned long>(framesPerSecond),
           static_cast<unsigned long>(averageRenderMs),
-          static_cast<unsigned long>(averageFlushMs),
+          static_cast<unsigned long>(averageCopyMs),
+          static_cast<unsigned long>(averageTransferMs),
+          static_cast<unsigned long>(averagePixelCount),
+          petList[displayedPetIndex].animalName,
           streamActive ? "on" : "off",
           audioSpectrumEnabled ? "on" : "off");
       lastAnimationStatsAt = statsNow;
       animationRenderTimeUs = 0;
-      animationFlushTimeUs = 0;
+      animationCopyTimeUs = 0;
+      animationTransferTimeUs = 0;
+      animationPixelCount = 0;
       animationFrameCount = 0;
       animationFlushCount = 0;
     }
   } else {
     lastAnimationStatsAt = statsNow;
     animationRenderTimeUs = 0;
-    animationFlushTimeUs = 0;
+    animationCopyTimeUs = 0;
+    animationTransferTimeUs = 0;
+    animationPixelCount = 0;
     animationFrameCount = 0;
     animationFlushCount = 0;
   }

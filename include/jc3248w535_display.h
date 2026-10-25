@@ -79,14 +79,18 @@ class TFT_eSPI : public Arduino_Canvas {
 
     jc3248w535::displayPanel.setRotation(0);
     Arduino_Canvas::setRotation(0);
-    markDirty(0, 0, jc3248w535::APP_WIDTH, jc3248w535::APP_HEIGHT);
+    nativeCoordinates_ = true;
+    resetViewport();
+    markDirty(0, 0, jc3248w535::DISPLAY_WIDTH,
+              jc3248w535::DISPLAY_HEIGHT);
     return true;
   }
 
   void setRotation(uint8_t) {
     jc3248w535::displayPanel.setRotation(0);
     Arduino_Canvas::setRotation(0);
-    markDirty(0, 0, jc3248w535::APP_WIDTH, jc3248w535::APP_HEIGHT);
+    markDirty(0, 0, jc3248w535::DISPLAY_WIDTH,
+              jc3248w535::DISPLAY_HEIGHT);
   }
 
   void setTextDatum(uint8_t datum) { textDatum_ = datum; }
@@ -96,6 +100,7 @@ class TFT_eSPI : public Arduino_Canvas {
   void setNativeCoordinates(bool enabled) {
     nativeCoordinates_ = enabled;
     resetViewport();
+    markDirty(0, 0, coordinateWidth(), coordinateHeight());
   }
 
   int16_t textWidth(const String &text, uint8_t font = 1) const {
@@ -225,6 +230,10 @@ class TFT_eSPI : public Arduino_Canvas {
   }
 
   bool flushFrame(void (*serviceAudio)() = nullptr) {
+    lastFlushCopyTimeUs_ = 0;
+    lastFlushTransferTimeUs_ = 0;
+    lastFlushAudioTimeUs_ = 0;
+    lastFlushPixelCount_ = 0;
     if (!dirty_) {
       return true;
     }
@@ -233,38 +242,45 @@ class TFT_eSPI : public Arduino_Canvas {
       return false;
     }
 
-    constexpr int16_t panelWidth = jc3248w535::PANEL_WIDTH;
-    constexpr int16_t panelHeight = jc3248w535::PANEL_HEIGHT;
     const uint16_t *source = getFramebuffer();
-
-    for (int16_t y = 0; y < panelHeight; ++y) {
-      const int16_t sourceX = jc3248w535::DISPLAY_WIDTH - 1 - y;
-      uint16_t *outputRow = outputBuffer_ + y * panelWidth;
-      for (int16_t x = 0; x < panelWidth; ++x) {
-        const int16_t sourceY = x;
-        outputRow[x] =
-            source[sourceY * jc3248w535::DISPLAY_WIDTH + sourceX];
-      }
-      if (serviceAudio != nullptr && (y & 0x0F) == 0) {
-        serviceAudio();
+    const uint32_t copyStartedAt = micros();
+    for (int16_t panelY = 0; panelY < jc3248w535::PANEL_HEIGHT; ++panelY) {
+      const int16_t screenX =
+          jc3248w535::PANEL_HEIGHT - 1 - panelY;
+      uint16_t *outputRow = outputBuffer_ + panelY * jc3248w535::PANEL_WIDTH;
+      for (int16_t panelX = 0; panelX < jc3248w535::PANEL_WIDTH; ++panelX) {
+        outputRow[panelX] =
+            source[panelX * jc3248w535::DISPLAY_WIDTH + screenX];
       }
     }
-
-    if (serviceAudio != nullptr) {
-      serviceAudio();
-    }
+    lastFlushCopyTimeUs_ = micros() - copyStartedAt;
+    const uint32_t transferStartedAt = micros();
     jc3248w535::displayPanel.draw16bitRGBBitmap(
-        0, 0, outputBuffer_, panelWidth, panelHeight);
+        0, 0, outputBuffer_, jc3248w535::PANEL_WIDTH,
+        jc3248w535::PANEL_HEIGHT);
+    lastFlushTransferTimeUs_ = micros() - transferStartedAt;
     if (serviceAudio != nullptr) {
+      const uint32_t audioStartedAt = micros();
       serviceAudio();
+      lastFlushAudioTimeUs_ += micros() - audioStartedAt;
     }
+    lastFlushPixelCount_ =
+        static_cast<uint32_t>(jc3248w535::PANEL_WIDTH) *
+        jc3248w535::PANEL_HEIGHT;
     dirty_ = false;
-    dirtyLeft_ = jc3248w535::APP_WIDTH;
-    dirtyTop_ = jc3248w535::APP_HEIGHT;
+    dirtyLeft_ = coordinateWidth();
+    dirtyTop_ = coordinateHeight();
     dirtyRight_ = 0;
     dirtyBottom_ = 0;
     return true;
   }
+
+  uint32_t lastFlushCopyTimeUs() const { return lastFlushCopyTimeUs_; }
+  uint32_t lastFlushTransferTimeUs() const {
+    return lastFlushTransferTimeUs_;
+  }
+  uint32_t lastFlushAudioTimeUs() const { return lastFlushAudioTimeUs_; }
+  uint32_t lastFlushPixelCount() const { return lastFlushPixelCount_; }
 
  private:
   int32_t coordinateWidth() const {
@@ -319,12 +335,16 @@ class TFT_eSPI : public Arduino_Canvas {
   int32_t clipTop_ = 0;
   int32_t clipRight_ = jc3248w535::APP_WIDTH;
   int32_t clipBottom_ = jc3248w535::APP_HEIGHT;
-  int32_t dirtyLeft_ = jc3248w535::APP_WIDTH;
-  int32_t dirtyTop_ = jc3248w535::APP_HEIGHT;
+  int32_t dirtyLeft_ = jc3248w535::DISPLAY_WIDTH;
+  int32_t dirtyTop_ = jc3248w535::DISPLAY_HEIGHT;
   int32_t dirtyRight_ = 0;
   int32_t dirtyBottom_ = 0;
   bool dirty_ = false;
   bool nativeCoordinates_ = false;
+  uint32_t lastFlushCopyTimeUs_ = 0;
+  uint32_t lastFlushTransferTimeUs_ = 0;
+  uint32_t lastFlushAudioTimeUs_ = 0;
+  uint32_t lastFlushPixelCount_ = 0;
 };
 
 class TFT_eSprite : public TFT_eSPI {

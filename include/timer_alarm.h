@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Audio.h>
+#include <driver/i2s.h>
 
-bool startTimerAlarm(Audio &audio, uint8_t musicVolume);
-void stopTimerAlarm(Audio &audio);
+bool startTimerAlarm(i2s_port_t port, uint8_t musicVolume);
+void stopTimerAlarm(i2s_port_t port);

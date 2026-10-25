@@ -1,4 +1,5 @@
 #include <math.h>
+#include <cstring>
 
 #include "audio_compressor.h"
 #include "audio_dac.h"
@@ -11,7 +12,7 @@ constexpr uint16_t FFT_SIZE = 256;
 constexpr uint8_t AUDIO_BLOCK_COUNT = 3;
 constexpr uint8_t SPECTRUM_BANDS = 8;
 #if defined(BOARD_JC3248W535)
-constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 100;
+constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 67;
 constexpr uint8_t SPECTRUM_EASING_STEP = 8;
 #else
 constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 250;
@@ -46,6 +47,7 @@ volatile bool captureEnabled = true;
 uint8_t writeBlock = 0;
 uint16_t captureIndex = 0;
 volatile uint32_t lastAudioBlockAt = 0;
+portMUX_TYPE audioBlocksMux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t lastSpectrumAnalysisAt = 0;
 float real[FFT_SIZE]{};
 float imaginary[FFT_SIZE]{};
@@ -159,12 +161,14 @@ void analyzeBlock(const AudioBlock &block) {
 
 // Enable or disable sample capture and reset pending blocks and bar history.
 void setAudioSpectrumEnabled(bool enabled) {
+  portENTER_CRITICAL(&audioBlocksMux);
   captureEnabled = enabled;
   queuedBlocks = 0;
   // readBlock = 0;
   writeBlock = 0;
   captureIndex = 0;
   lastAudioBlockAt = 0;
+  portEXIT_CRITICAL(&audioBlocksMux);
   lastSpectrumAnalysisAt = 0;
   referenceDecibels = -60.0f;
   for (uint8_t band = 0; band < SPECTRUM_BANDS; ++band) {
@@ -177,24 +181,24 @@ namespace {
 
 // Store mono samples in the bounded ring of blocks consumed by the UI task.
 void captureSpectrumSample(uint32_t sample) {
-  if (!captureEnabled) {
-    return;
-  }
-
   const int16_t left = static_cast<int16_t>(sample >> 16);
   const int16_t right = static_cast<int16_t>(sample & 0xFFFF);
-  audioBlocks[writeBlock].samples[captureIndex++] =
-      static_cast<int16_t>((static_cast<int32_t>(left) + right) / 2);
+  portENTER_CRITICAL(&audioBlocksMux);
+  if (captureEnabled) {
+    audioBlocks[writeBlock].samples[captureIndex++] =
+        static_cast<int16_t>((static_cast<int32_t>(left) + right) / 2);
 
-  if (captureIndex == FFT_SIZE) {
-    captureIndex = 0;
-    lastAudioBlockAt = millis();
-    writeBlock = (writeBlock + 1) % AUDIO_BLOCK_COUNT;
-    // Keep the newest window rolling when analysis falls behind.
-    if (queuedBlocks < AUDIO_BLOCK_COUNT) {
-      ++queuedBlocks;
+    if (captureIndex == FFT_SIZE) {
+      captureIndex = 0;
+      lastAudioBlockAt = millis();
+      writeBlock = (writeBlock + 1) % AUDIO_BLOCK_COUNT;
+      // Keep the newest window rolling when analysis falls behind.
+      if (queuedBlocks < AUDIO_BLOCK_COUNT) {
+        ++queuedBlocks;
+      }
     }
   }
+  portEXIT_CRITICAL(&audioBlocksMux);
 }
 
 }  // namespace
@@ -225,17 +229,27 @@ void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
     return;
   }
 
+  AudioBlock newestAudioBlock{};
+  uint32_t newestAudioBlockAt = 0;
+  bool haveAudioBlock = false;
+  portENTER_CRITICAL(&audioBlocksMux);
   if (queuedBlocks > 0 &&
       now - lastSpectrumAnalysisAt >= SPECTRUM_REFRESH_INTERVAL_MS) {
     const uint8_t newestBlock =
         (writeBlock + queuedBlocks - 1) % AUDIO_BLOCK_COUNT;
-    analyzeBlock(audioBlocks[newestBlock]);
+    memcpy(&newestAudioBlock, &audioBlocks[newestBlock],
+           sizeof(newestAudioBlock));
     queuedBlocks = 0;
-    // readBlock = writeBlock;
+    haveAudioBlock = true;
+  }
+  newestAudioBlockAt = lastAudioBlockAt;
+  portEXIT_CRITICAL(&audioBlocksMux);
+  if (haveAudioBlock) {
+    analyzeBlock(newestAudioBlock);
     lastSpectrumAnalysisAt = now;
   }
 
-  if (!streamActive || now - lastAudioBlockAt > AUDIO_STALE_MS) {
+  if (!streamActive || now - newestAudioBlockAt > AUDIO_STALE_MS) {
     for (uint8_t band = 0; band < SPECTRUM_BANDS; ++band) {
       targetHeights[band] = 0;
     }

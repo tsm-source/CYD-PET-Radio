@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <driver/i2s.h>
 #include <math.h>
 
 #include "timer_alarm.h"
@@ -61,11 +60,19 @@ int16_t sampleForFrame(uint32_t frame, uint8_t alarmVolume) {
 }
 
 // Feed the generated chime to I2S independently of the main UI/audio loop.
+struct AlarmTaskParameters {
+  i2s_port_t port;
+  uint8_t volume;
+};
+
+AlarmTaskParameters alarmTaskParameters{};
+
 void alarmTask(void *parameter) {
-  Audio *audio = static_cast<Audio *>(parameter);
-  const i2s_port_t port = static_cast<i2s_port_t>(audio->getI2sPort());
+  const AlarmTaskParameters *taskParameters =
+      static_cast<const AlarmTaskParameters *>(parameter);
+  const i2s_port_t port = taskParameters->port;
   uint32_t sampleFrame = 0;
-  const uint8_t alarmVolume = min<uint8_t>(audio->getVolume(), 21);
+  const uint8_t alarmVolume = min<uint8_t>(taskParameters->volume, 21);
 
   while (playing && sampleFrame < ALARM_TOTAL_FRAMES) {
     uint32_t samples[FRAMES_PER_WRITE];
@@ -103,7 +110,7 @@ void alarmTask(void *parameter) {
 }  // namespace
 
 // Configure I2S and launch the alarm writer; return false if setup fails.
-bool startTimerAlarm(Audio &audio, uint8_t musicVolume) {
+bool startTimerAlarm(i2s_port_t port, uint8_t musicVolume) {
   if (musicVolume == 0) {
     playing = false;
     return true;
@@ -114,8 +121,7 @@ bool startTimerAlarm(Audio &audio, uint8_t musicVolume) {
   }
 
   const esp_err_t result =
-      i2s_set_sample_rates(static_cast<i2s_port_t>(audio.getI2sPort()),
-                           ALARM_SAMPLE_RATE);
+      i2s_set_sample_rates(port, ALARM_SAMPLE_RATE);
   if (result != ESP_OK) {
     Serial.printf("ERROR: could not configure timer alarm audio (%d).\n",
                   result);
@@ -123,16 +129,17 @@ bool startTimerAlarm(Audio &audio, uint8_t musicVolume) {
     return false;
   }
   const esp_err_t clearResult =
-      i2s_zero_dma_buffer(static_cast<i2s_port_t>(audio.getI2sPort()));
+      i2s_zero_dma_buffer(port);
   if (clearResult != ESP_OK) {
     Serial.printf("ERROR: could not clear timer alarm audio buffer (%d).\n",
                   clearResult);
     return false;
   }
   playing = true;
-  const BaseType_t taskResult =
-      xTaskCreatePinnedToCore(alarmTask, "timerAlarm", ALARM_STACK_SIZE, &audio,
-                              ALARM_TASK_PRIORITY, &alarmTaskHandle, 1);
+  alarmTaskParameters = {port, musicVolume};
+  const BaseType_t taskResult = xTaskCreatePinnedToCore(
+      alarmTask, "timerAlarm", ALARM_STACK_SIZE, &alarmTaskParameters,
+      ALARM_TASK_PRIORITY, &alarmTaskHandle, 1);
   if (taskResult != pdPASS) {
     alarmTaskHandle = nullptr;
     playing = false;
@@ -143,10 +150,9 @@ bool startTimerAlarm(Audio &audio, uint8_t musicVolume) {
 }
 
 // Stop the alarm task's output immediately and clear any queued DMA samples.
-void stopTimerAlarm(Audio &audio) {
+void stopTimerAlarm(i2s_port_t port) {
   playing = false;
-  const esp_err_t result =
-      i2s_zero_dma_buffer(static_cast<i2s_port_t>(audio.getI2sPort()));
+  const esp_err_t result = i2s_zero_dma_buffer(port);
   if (result != ESP_OK) {
     Serial.printf("ERROR: could not stop timer alarm audio (%d).\n", result);
   }
