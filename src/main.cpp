@@ -385,6 +385,13 @@ uint32_t petTransitionStartedAt = 0;
 uint32_t nextDanceChangeAt = 0;
 uint32_t lastClockUpdateAt = 0;
 uint32_t lastBitrateUpdateAt = 0;
+#if defined(BOARD_JC3248W535)
+constexpr char BOARD_LOG_NAME[] = "JC3248W535";
+#elif defined(BOARD_FREENOVE_FNK0114L)
+constexpr char BOARD_LOG_NAME[] = "FNK0114L";
+#else
+constexpr char BOARD_LOG_NAME[] = USER_SETUP_INFO;
+#endif
 uint32_t lastDisplayedBitrateKbps = UINT32_MAX;
 int lastDisplayedCodec = -1;
 uint32_t lastPetChangeAt = 0;
@@ -4077,6 +4084,7 @@ void audio_eof_stream(const char *info) {
 // Initialize hardware, restore settings, calibrate touch, and start networking.
 void setup() {
   Serial.begin(115200);
+  Serial.printf("Boot: CYD PET Radio on %s\n", BOARD_LOG_NAME);
 #if defined(BOARD_JC3248W535)
   if (!display.init()) {
     Serial.println("ERROR: JC3248W535 display initialization failed.");
@@ -4284,6 +4292,8 @@ void setup() {
 void loop() {
 #if defined(BOARD_JC3248W535)
   applyPendingAudioCallbacks();
+#else
+  radioAudio.loop();
 #endif
   updateNetwork();
 
@@ -4334,6 +4344,19 @@ void loop() {
       lastDisplayedCodec = codecId;
       homeBitrateDirty = true;
     }
+  }
+  static uint32_t lastStatusLogAt = 0;
+  if (now - lastStatusLogAt >= 5000) {
+    lastStatusLogAt = now;
+    const bool online = WiFi.status() == WL_CONNECTED;
+    Serial.printf("[%s] wifi=%s stream=%s codec=%d bitrate=%ukbps heap=%u\n",
+                  BOARD_LOG_NAME, online ? "up" : "down",
+                  streamActive ? "on" : "off",
+                  online && streamActive ? radioCodec() : 0,
+                  static_cast<unsigned>(
+                      online && streamActive ? (radioBitRate() + 500) / 1000
+                                             : 0),
+                  static_cast<unsigned>(ESP.getFreeHeap()));
   }
   if (audioDirty) {
     audioDirty = false;
