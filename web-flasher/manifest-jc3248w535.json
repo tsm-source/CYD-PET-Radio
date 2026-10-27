@@ -9,7 +9,7 @@
       "parts": [
         {
           "path": "firmware/jc3248w535/bootloader.bin",
-          "offset": 4096
+          "offset": 0
         },
         {
           "path": "firmware/jc3248w535/partitions.bin",
