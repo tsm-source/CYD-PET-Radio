@@ -47,7 +47,30 @@ line. Animation drawing is clipped between that header and the spectrum; the
 complete panel is pushed as one frame to reduce flicker. This frees internal
 heap for HTTPS/TLS; the audio input buffer is unchanged.
 At boot, the serial log reports the detected display setup and the active
-PlatformIO profile to help identify firmware/display mismatches.
+PlatformIO profile to help identify firmware/display mismatches. While running,
+a status line (`[board] wifi=… stream=… codec=… bitrate=…`) is printed every
+five seconds.
+
+Known limitation: some ESP32-2432S028 boards with both a USB-C and a micro USB
+port have a speaker amplifier stage that is very loud and noisy with this
+firmware, even at the lowest volume step. The cause appears to be the board's
+hardware; the firmware's output level, noise shaping, compressor, and Wi-Fi
+settings do not remove it. Use the headphone jack or another board for audio.
+
+## Testing before a release
+
+Every board profile must be built and checked on hardware before tagging a
+release. `scripts/dual_monitor.py` reads several boards at once and prefixes
+each line with a board name, without resetting them:
+
+```sh
+python scripts/dual_monitor.py 40 ST7789=COM9 JC3248=COM10
+```
+
+Checklist per board: Wi-Fi connects, a stream starts (`stream=on`, codec and
+bitrate shown), audio is audible, station change works, display and touch
+work, and the timer alarm sounds. Common code paths such as
+`radioAudio.loop()` must be serviced on every board.
 
 ## Radio controls
 
