@@ -4,9 +4,13 @@
 #include <SPI.h>
 #include "radio_display.h"
 #include <time.h>
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104B)
 #include <Wire.h>
-#else
+#endif
+#if defined(BOARD_FREENOVE_FNK0104B)
+#include "es8311_codec.h"
+#endif
+#if !defined(BOARD_JC3248W535) && !defined(BOARD_FREENOVE_FNK0104B)
 #include <XPT2046_Touchscreen.h>
 #endif
 #include <WiFi.h>
@@ -269,7 +273,21 @@ int16_t UI_WIDTH = HOME_UI_WIDTH;
 int16_t themeSwatchWidth = HOME_THEME_SWATCH_WIDTH;
 int16_t themeSwatchHeight = HOME_THEME_SWATCH_HEIGHT;
 int16_t themeSwatchGap = HOME_THEME_SWATCH_GAP;
-#if !defined(BOARD_JC3248W535)
+#if defined(BOARD_FREENOVE_FNK0104B)
+constexpr uint8_t TOUCH_SDA_PIN = 16;
+constexpr uint8_t TOUCH_SCL_PIN = 15;
+constexpr uint8_t TOUCH_RESET_PIN = 18;
+constexpr uint8_t TOUCH_ADDRESS = 0x38;
+constexpr uint8_t AUDIO_AMP_ENABLE_PIN_FNK0104B = 1;
+constexpr uint8_t I2S_MCLK_PIN = 4;
+constexpr uint8_t I2S_BCLK_PIN = 5;
+constexpr uint8_t I2S_DATA_IN_PIN = 6;
+constexpr uint8_t I2S_LRC_PIN = 7;
+constexpr uint8_t I2S_DATA_OUT_PIN = 8;
+uint16_t lastTouchRawX = 0;
+uint16_t lastTouchRawY = 0;
+uint32_t codecSampleRate = 0;
+#elif !defined(BOARD_JC3248W535)
 SPIClass touchSPI(HSPI);
 XPT2046_Touchscreen touch(33, 36);
 #else
@@ -282,7 +300,7 @@ uint16_t lastTouchRawY = 0;
 #endif
 Preferences preferences;
 // DAC channel 2 is GPIO 26, the CYD speaker output.
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104B)
 Audio radioAudio;
 #else
 Audio radioAudio(true, I2S_DAC_CHANNEL_LEFT_EN);
@@ -1728,7 +1746,7 @@ void drawAudioSettings() {
   TFT_eSPI &display = *renderTarget;
   drawPanelHeader("AUDIO");
   drawMenuBackButton();
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104B)
   const String labels[] = {
       String("AUDIO BOOST +6 dB: ") + (audioBoost ? "ON" : "OFF"),
       String("SPECTRUM: ") + (audioSpectrumEnabled ? "ON" : "OFF"),
@@ -2478,6 +2496,23 @@ bool touchscreenTouched() {
   lastTouchRawX = rawY;
   lastTouchRawY = 320 - rawX;
   return true;
+#elif defined(BOARD_FREENOVE_FNK0104B)
+  uint8_t data[5]{};
+  Wire.beginTransmission(TOUCH_ADDRESS);
+  Wire.write(static_cast<uint8_t>(0x02));
+  if (Wire.endTransmission(false) != 0 ||
+      Wire.requestFrom(TOUCH_ADDRESS, sizeof(data)) != sizeof(data)) {
+    return false;
+  }
+  for (uint8_t &byte : data) {
+    byte = Wire.read();
+  }
+  if ((data[0] & 0x0F) == 0) {
+    return false;
+  }
+  lastTouchRawX = (static_cast<uint16_t>(data[1] & 0x0F) << 8) | data[2];
+  lastTouchRawY = (static_cast<uint16_t>(data[3] & 0x0F) << 8) | data[4];
+  return true;
 #elif defined(BOARD_FREENOVE_FNK0114L)
   return display.getTouchRawZ() > 350;
 #else
@@ -2486,7 +2521,7 @@ bool touchscreenTouched() {
 }
 
 void readRawTouch(uint16_t &x, uint16_t &y) {
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104B)
   x = lastTouchRawX;
   y = lastTouchRawY;
 #elif defined(BOARD_FREENOVE_FNK0114L)
@@ -3111,7 +3146,7 @@ void setAudioNoiseShaping(bool enabled) {
 // Control the optional active-low amplifier enable on compatible CYD boards.
 void setAudioAmpEnabled(bool enabled) {
   audioAmpEnabled = enabled;
-#if !defined(BOARD_JC3248W535)
+#if !defined(BOARD_JC3248W535) && !defined(BOARD_FREENOVE_FNK0104B)
   digitalWrite(AUDIO_AMP_ENABLE_PIN, enabled ? LOW : HIGH);
   pinMode(AUDIO_AMP_ENABLE_PIN, OUTPUT);
 #endif
@@ -3879,6 +3914,9 @@ void handleTouch(int16_t x, int16_t y) {
       } else if (pointInRect(x, y, UI_LEFT, AUDIO_VOLUME_TRACK_Y - 8,
                              UI_WIDTH, 30)) {
         adjustVolumeFromTouch(x);
+#elif defined(BOARD_FREENOVE_FNK0104B)
+      } else if (pointInRect(x, y, UI_LEFT, 190, UI_WIDTH, 50)) {
+        adjustVolumeFromTouch(x);
 #else
       } else if (pointInRect(x, y, UI_LEFT, 133, UI_WIDTH, 29)) {
         setAudioAmpEnabled(!audioAmpEnabled);
@@ -4144,6 +4182,14 @@ void setup() {
   delay(20);
   digitalWrite(TOUCH_RESET_PIN, HIGH);
   delay(200);
+#elif defined(BOARD_FREENOVE_FNK0104B)
+  Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+  Wire.setClock(400000);
+  pinMode(TOUCH_RESET_PIN, OUTPUT);
+  digitalWrite(TOUCH_RESET_PIN, LOW);
+  delay(20);
+  digitalWrite(TOUCH_RESET_PIN, HIGH);
+  delay(100);
 #elif !defined(BOARD_FREENOVE_FNK0114L)
   touchSPI.begin(25, 39, 32, 33);
   if (!touch.begin(touchSPI)) {
@@ -4167,13 +4213,13 @@ void setup() {
   applyDisplayBrightness(displayBrightness);
 #endif
   audioBoost = preferences.getBool("boost", false);
-#if !defined(BOARD_JC3248W535)
+#if !defined(BOARD_JC3248W535) && !defined(BOARD_FREENOVE_FNK0104B)
   audioAmpEnabled = preferences.getBool("amp4", false);
 #endif
   audioSpectrumEnabled = preferences.getBool("spectrum", true);
   audioCompressorEnabled = preferences.getBool("compressor", false);
   setAudioCompressorEnabled(audioCompressorEnabled);
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104B)
   audioNoiseShaping = false;
   setAudioNoiseShapingEnabled(false);
 #else
@@ -4247,7 +4293,7 @@ void setup() {
 #endif
 
   // Give the audio library enough input buffering for network jitter.
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104B)
   radioAudio.setBufsize(AUDIO_INPUT_BUFFER_BYTES, AUDIO_PSRAM_BUFFER_BYTES);
 #else
   radioAudio.setBufsize(AUDIO_INPUT_BUFFER_BYTES, 0);
@@ -4257,6 +4303,19 @@ void setup() {
   if (!radioAudio.setPinout(42, 2, 41)) {
     Serial.println("ERROR: could not configure the board's I2S audio output.");
     setStatus("I2S audio output unavailable");
+  }
+#elif defined(BOARD_FREENOVE_FNK0104B)
+  pinMode(AUDIO_AMP_ENABLE_PIN_FNK0104B, OUTPUT);
+  digitalWrite(AUDIO_AMP_ENABLE_PIN_FNK0104B, LOW);
+  if (!radioAudio.setPinout(I2S_BCLK_PIN, I2S_LRC_PIN, I2S_DATA_OUT_PIN,
+                            I2S_DATA_IN_PIN, I2S_MCLK_PIN)) {
+    Serial.println("ERROR: could not configure the board's I2S audio output.");
+    setStatus("I2S audio output unavailable");
+  }
+  codecSampleRate = 44100;
+  if (!es8311Begin(Wire, codecSampleRate)) {
+    Serial.println("ERROR: ES8311 audio codec initialization failed.");
+    setStatus("Audio codec unavailable");
   }
 #endif
   const int8_t audioGain = audioBoost ? AUDIO_BOOST_DB : 0;
@@ -4294,6 +4353,16 @@ void loop() {
   applyPendingAudioCallbacks();
 #else
   radioAudio.loop();
+#if defined(BOARD_FREENOVE_FNK0104B)
+  const uint32_t streamSampleRate = radioAudio.getSampleRate();
+  if (streamSampleRate != 0 && streamSampleRate != codecSampleRate) {
+    codecSampleRate = streamSampleRate;
+    if (!es8311SetSampleRate(streamSampleRate)) {
+      Serial.printf("WARNING: ES8311 cannot play %u Hz.\n",
+                    static_cast<unsigned>(streamSampleRate));
+    }
+  }
+#endif
 #endif
   updateNetwork();
 

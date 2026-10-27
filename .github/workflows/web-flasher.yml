@@ -34,24 +34,27 @@ jobs:
           pio run -e esp32dev-ili9341-low-memory
           pio run -e fnk0114l-low-memory
           pio run -e jc3248w535
+          pio run -e fnk0104b
 
       - name: Assemble website and firmware
         env:
           VERSION: ${{ github.sha }}
         run: |
-          mkdir -p site/firmware/cyd site/firmware/cyd-ili9341 site/firmware/freenove site/firmware/jc3248w535
+          mkdir -p site/firmware/cyd site/firmware/cyd-ili9341 site/firmware/freenove site/firmware/jc3248w535 site/firmware/fnk0104b
           cp web-flasher/index.html site/index.html
           cp web-flasher/manifest.json site/manifest.json
           cp web-flasher/manifest-cyd-ili9341.json site/manifest-cyd-ili9341.json
           cp web-flasher/manifest-freenove.json site/manifest-freenove.json
           cp web-flasher/manifest-jc3248w535.json site/manifest-jc3248w535.json
+          cp web-flasher/manifest-fnk0104b.json site/manifest-fnk0104b.json
           cp src/CYD-PET-Radio.png site/CYD-PET-Radio.png
-          for target in cyd cyd-ili9341 freenove jc3248w535; do
+          for target in cyd cyd-ili9341 freenove jc3248w535 fnk0104b; do
             case "$target" in
               cyd) env_name=esp32dev-fast-low-memory ;;
               cyd-ili9341) env_name=esp32dev-ili9341-low-memory ;;
               freenove) env_name=fnk0114l-low-memory ;;
               jc3248w535) env_name=jc3248w535 ;;
+              fnk0104b) env_name=fnk0104b ;;
             esac
             cp ".pio/build/$env_name/bootloader.bin" "site/firmware/$target/bootloader.bin"
             cp ".pio/build/$env_name/partitions.bin" "site/firmware/$target/partitions.bin"

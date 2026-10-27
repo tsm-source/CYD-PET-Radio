@@ -20,6 +20,7 @@ jobs:
           - esp32dev-ili9341-low-memory
           - fnk0114l-low-memory
           - jc3248w535
+          - fnk0104b
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

@@ -81,7 +81,7 @@ void alarmTask(void *parameter) {
     for (uint32_t index = 0; index < frameCount; ++index) {
       const int16_t sample = sampleForFrame(sampleFrame + index, alarmVolume);
       uint16_t outputSample = static_cast<uint16_t>(sample);
-#if !defined(BOARD_JC3248W535)
+#if !defined(BOARD_JC3248W535) && !defined(BOARD_FREENOVE_FNK0104B)
       // The built-in DAC uses unsigned PCM; external I2S output uses signed PCM.
       outputSample = static_cast<uint16_t>(outputSample + 0x8000);
 #endif
