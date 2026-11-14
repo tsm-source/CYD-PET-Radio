@@ -3,7 +3,8 @@
 > **AI disclosure:** The text of this README was created with AI assistance.
 
 A touchscreen webradio for the ESP32-based CYD (Cheap Yellow Display), the
-Freenove FNK0114L, the Guition JC3248W535C_I_Y, and the Freenove FNK0104B, using the same basic board configuration as
+Freenove FNK0114L, the Guition JC3248W535C_I_Y, and the Freenove FNK0104B and
+FNK0104S, using the same basic board configuration as
 [CYD of the Dead](https://github.com/tsm-source/CYD-of-the-dead). A round,
 animated cat dances in the left 30% of the display while radio controls fill
 the right side. Both panels are rendered into 8-bit sprite buffers before
@@ -16,9 +17,9 @@ on the decoded audio samples.
 ## Hardware configuration
 
 The firmware supports the CYD and Freenove boards, including two CYD display
-variants, plus the Guition JC3248W535C_I_Y. Choose the matching firmware in PlatformIO or the web flasher; the
-display controllers and some board-specific pin configurations differ, so
-the firmware images are not interchangeable.
+variants, plus the Guition JC3248W535C_I_Y. Choose the matching firmware in
+PlatformIO or the web flasher; the display controllers and some board-specific
+pin configurations differ, so the firmware images are not interchangeable.
 
 | Feature | CYD 2.8″ ST7789 | CYD 2.8″ ILI9341 (ESP32-2432S028R) | Freenove FNK0114L 3.2″ | JC3248W535C_I_Y 3.5″ |
 |---------|----------------|-----------------------------------|------------------------|----------------------|
@@ -41,6 +42,15 @@ backlight 45), capacitive FT6336U touch over I²C (SDA 16, SCL 15, reset 18) and
 audio through the ES8311 codec (MCLK 4, BCLK 5, LRCLK 7, DOUT 8, amplifier
 enable GPIO 1). The codec sample rate follows the stream. The CYD-only
 GPIO 4 amplifier and noise-shaping options are not shown on this board.
+
+### Freenove FNK0104S 4″ (ESP32-S3)
+
+Environment `fnk0104s`, display setup `include/freenove_fnk0104s_setup.h`.
+ST7796 320 × 480 display over SPI (MOSI 11, SCLK 12, CS 10, DC 46,
+backlight 45), operated in landscape at 480 × 320 with a PSRAM-backed screen
+frame buffer. FT6336U touch and ES8311 audio use the same I²C and I²S pins as
+the FNK0104B. The wide-screen interface matches the JC3248W535C_I_Y layout,
+while the display, touch, and audio drivers remain board-specific.
 
 The FNK0114L also has an optional rear RGB LED. Open **MENU > RGB LED** to
 enable it, choose one of five colors, and optionally turn on slow pulsing.
@@ -228,9 +238,9 @@ NTP synchronization is also requested after Wi-Fi connects.
 The audio decoder is pinned to
 [ESP32-audioI2S 2.0.6](https://github.com/schreibfaul1/ESP32-audioI2S/tree/2.0.6)
 because this release supports the classic ESP32's built-in DAC used by the
-CYD/FNK0114L and I²S output used by the JC3248W535C_I_Y and FNK0104B. The decoder
-is licensed under GPL-3.0; check its license and the requirements that apply
-when distributing firmware.
+CYD/FNK0114L and I²S output used by the JC3248W535C_I_Y and FNK0104B/FNK0104S.
+The decoder is licensed under GPL-3.0; check its license and the requirements
+that apply when distributing firmware.
 
 The radio playback flow and stream-metadata handling take inspiration from
 [yoRadio](https://github.com/e2002/yoradio); the touchscreen interface,
@@ -241,8 +251,8 @@ settings, and cat animation are implemented for this CYD project.
 After enabling GitHub Pages for this repository with **Settings > Pages >
 Build and deployment > GitHub Actions**, choose the matching board button on
 the [web flasher](https://tsm-source.github.io/CYD-PET-Radio/). Every push to
-`main` builds the five firmware variants and deploys the flasher
-automatically. The CYD and Freenove options use low-memory builds, which
+`main` builds the six firmware variants and deploys the flasher
+automatically. The CYD and FNK0114L options use low-memory builds, which
 reserve more internal heap for HTTPS/TLS streams. The JC3248W535C_I_Y profile
 renders the landscape interface at the panel's native 480 × 320 pixel
 resolution, uses PSRAM-backed frame and stream buffers, and updates only the
@@ -274,6 +284,8 @@ pio run -e jc3248w535
 pio run -e jc3248w535 -t upload --upload-port COM10
 pio run -e fnk0104b
 pio run -e fnk0104b -t upload
+pio run -e fnk0104s
+pio run -e fnk0104s -t upload
 ```
 
 The volume, Wi-Fi credentials, touchscreen calibration, and station list are

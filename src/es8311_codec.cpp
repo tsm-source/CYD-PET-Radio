@@ -1,4 +1,4 @@
-#if defined(BOARD_FREENOVE_FNK0104B)
+#if defined(BOARD_FREENOVE_FNK0104B) || defined(BOARD_FREENOVE_FNK0104S)
 
 #include "es8311_codec.h"
 

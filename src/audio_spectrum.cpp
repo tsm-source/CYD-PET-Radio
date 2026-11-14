@@ -11,7 +11,7 @@ namespace {
 constexpr uint16_t FFT_SIZE = 256;
 constexpr uint8_t AUDIO_BLOCK_COUNT = 3;
 constexpr uint8_t SPECTRUM_BANDS = 8;
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104S)
 constexpr uint32_t SPECTRUM_REFRESH_INTERVAL_MS = 67;
 constexpr uint32_t AUDIO_STALE_MS = 1200;
 constexpr uint8_t SPECTRUM_ATTACK_STEP = 8;
@@ -219,7 +219,7 @@ void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
   frameBuffer.setTextColor(TFT_CYAN, 0x0841);
 
   if (!enabled) {
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104S)
     frameBuffer.drawString("SPECTRUM OFF", FAT_CAT_PANEL_WIDTH / 2, 292, 1);
 #else
     frameBuffer.drawString("SPECTRUM OFF", FAT_CAT_PANEL_WIDTH / 2, 218, 1);
@@ -253,7 +253,7 @@ void drawAudioSpectrum(TFT_eSPI &frameBuffer, uint32_t now,
     }
   }
 
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104S)
   constexpr int16_t BAR_WIDTH = 10;
   constexpr int16_t BAR_GAP = 6;
 #else

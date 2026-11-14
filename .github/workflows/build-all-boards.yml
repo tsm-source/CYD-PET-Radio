@@ -21,6 +21,7 @@ jobs:
           - fnk0114l-low-memory
           - jc3248w535
           - fnk0104b
+          - fnk0104s
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
