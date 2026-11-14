@@ -21,18 +21,19 @@ variants, plus the Guition JC3248W535C_I_Y. Choose the matching firmware in
 PlatformIO or the web flasher; the display controllers and some board-specific
 pin configurations differ, so the firmware images are not interchangeable.
 
-| Feature | CYD 2.8″ ST7789 | CYD 2.8″ ILI9341 (ESP32-2432S028R) | Freenove FNK0114L 3.2″ | JC3248W535C_I_Y 3.5″ |
-|---------|----------------|-----------------------------------|------------------------|----------------------|
-| Display | ST7789, 240 × 320 | ILI9341, 240 × 320 | ST7789, 240 × 320 | AXS15231B QSPI, 320 × 480 (landscape UI) |
-| Touch | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, shared HSPI bus | Capacitive AXS15231B, I²C |
-| Audio output | Built-in DAC, GPIO 26 | Built-in DAC, GPIO 26 | Built-in DAC, GPIO 26 | On-board I²S output (BCLK 42, LRCLK 2, DOUT 41) |
-| Backlight | GPIO 21 | GPIO 21 | GPIO 27 | GPIO 1 |
-| PlatformIO environment | `esp32dev` (40 MHz), `esp32dev-fast` (80 MHz), or `esp32dev-fast-low-memory` for HTTPS on boards without PSRAM | `esp32dev-ili9341` (40 MHz) or `esp32dev-ili9341-low-memory` for HTTPS on boards without PSRAM | `fnk0114l` (80 MHz) or `fnk0114l-low-memory` for HTTPS | `jc3248w535` |
-| Display setup | `include/cyd_user_setup.h` | `include/cyd_ili9341_setup.h` | `include/freenove_fnk0114l_setup.h` | `include/jc3248w535_display.h` |
+| Feature | CYD 2.8″ ST7789 | CYD 2.8″ ILI9341 (ESP32-2432S028R) | Freenove FNK0114L 3.2″ | JC3248W535C_I_Y 3.5″ | Freenove FNK0104B 2.8″ | Freenove FNK0104S 4.0″ |
+|---------|----------------|-----------------------------------|------------------------|----------------------|-------------------------|------------------------|
+| Display | ST7789, 240 × 320 | ILI9341, 240 × 320 | ST7789, 240 × 320 | AXS15231B QSPI, 320 × 480 (landscape UI) | ILI9341, 240 × 320 | ST7796, 320 × 480 (landscape UI) |
+| Touch | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, dedicated SPI bus | Resistive XPT2046, shared HSPI bus | Capacitive AXS15231B, I²C | Capacitive FT6336U, I²C | Capacitive FT6336U, I²C |
+| Audio output | Built-in DAC, GPIO 26 | Built-in DAC, GPIO 26 | Built-in DAC, GPIO 26 | On-board I²S output (BCLK 42, LRCLK 2, DOUT 41) | ES8311 codec, I²S | ES8311 codec, I²S |
+| Backlight | GPIO 21 | GPIO 21 | GPIO 27 | GPIO 1 | GPIO 45 | GPIO 45 |
+| PlatformIO environment | `esp32dev` (40 MHz), `esp32dev-fast` (80 MHz), or `esp32dev-fast-low-memory` for HTTPS on boards without PSRAM | `esp32dev-ili9341` (40 MHz) or `esp32dev-ili9341-low-memory` for HTTPS on boards without PSRAM | `fnk0114l` (80 MHz) or `fnk0114l-low-memory` for HTTPS | `jc3248w535` | `fnk0104b` | `fnk0104s` |
+| Display setup | `include/cyd_user_setup.h` | `include/cyd_ili9341_setup.h` | `include/freenove_fnk0114l_setup.h` | `include/jc3248w535_display.h` | `include/freenove_fnk0104b_setup.h` | `include/freenove_fnk0104s_setup.h` |
 
 The CYD and FNK0114L use the ESP32's built-in DAC on GPIO 26 for mono speaker
-output. The JC3248W535C_I_Y uses its on-board I²S audio path. Wi-Fi credentials
-and the station list are saved in each board's non-volatile storage.
+output. The JC3248W535C_I_Y uses its on-board I²S audio path; the FNK0104B and
+FNK0104S use their ES8311 codecs. Wi-Fi credentials and the station list are
+saved in each board's non-volatile storage.
 
 ### Freenove FNK0104B 2.8″ (ESP32-S3)
 
