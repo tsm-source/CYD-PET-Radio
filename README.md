@@ -51,7 +51,8 @@ ST7796 320 × 480 display over SPI (MOSI 11, SCLK 12, CS 10, DC 46,
 backlight 45), operated in landscape at 480 × 320 with a PSRAM-backed screen
 frame buffer. FT6336U touch and ES8311 audio use the same I²C and I²S pins as
 the FNK0104B. The wide-screen interface matches the JC3248W535C_I_Y layout,
-while the display, touch, and audio drivers remain board-specific.
+while the display, touch, and audio drivers remain board-specific. The pet,
+timer and spectrum panel uses the full space to the left of the controls.
 
 #### MP3 playback and SD card (FNK0104S only)
 
@@ -62,8 +63,9 @@ supported by this firmware.
 
 1. Tap **MP3** at the top right of the home screen to open the SD browser.
 2. Select a folder or MP3 file. **UP** returns to the parent folder and the
-   arrow buttons change pages. Tap the track name during playback to browse
-   again.
+   arrow buttons change pages. Tap the current folder button or track name
+   during playback to browse from the playing track's folder; use **UP** to
+   choose a different folder.
 3. Use play/pause and previous/next on the home screen to control playback.
    The next MP3 in the same folder starts automatically at the end of a
    track; after the last track, playback wraps to the first.

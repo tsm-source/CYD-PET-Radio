@@ -90,6 +90,13 @@ constexpr int16_t TIMER_ADJUST_RIGHT_X = 49;
 constexpr int16_t TIMER_ADJUST_BUTTON_WIDTH = 43;
 constexpr int16_t TIMER_ADJUST_BUTTON_HEIGHT = 25;
 #endif
+#if defined(BOARD_FREENOVE_FNK0104S)
+constexpr int16_t TIMER_CENTER_X = CAT_PANEL_WIDTH / 2;
+constexpr int16_t TIMER_ACTION_BUTTON_X = TIMER_CENTER_X - 40;
+#else
+constexpr int16_t TIMER_CENTER_X = 48;
+constexpr int16_t TIMER_ACTION_BUTTON_X = 8;
+#endif
 #if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104S)
 constexpr int16_t HOME_UI_LEFT = 132;
 constexpr int16_t HOME_UI_WIDTH = 336;
@@ -911,7 +918,12 @@ void shiftPetPanel(TFT_eSprite &frameBuffer, int16_t offset) {
     Serial.println("ERROR: missing display frame buffer during pet transition.");
     return;
   }
-  for (int16_t y = PET_HEADER_HEIGHT; y < 195; ++y) {
+#if defined(BOARD_FREENOVE_FNK0104S)
+  constexpr int16_t transitionBottom = PET_HEADER_HEIGHT + PET_ANIMATION_HEIGHT;
+#else
+  constexpr int16_t transitionBottom = 195;
+#endif
+  for (int16_t y = PET_HEADER_HEIGHT; y < transitionBottom; ++y) {
     uint8_t *row = pixels + y * DISPLAY_WIDTH;
     if (offset > 0) {
       memmove(row + distance, row, FAT_CAT_PANEL_WIDTH - distance);
@@ -1004,16 +1016,16 @@ void drawTimerAdjustButton(int16_t x, int16_t y, bool increase,
 }
 
 void drawTimerActionButton(const char *label) {
-  renderTarget->fillRoundRect(8, TIMER_ACTION_BUTTON_Y, 80,
+  renderTarget->fillRoundRect(TIMER_ACTION_BUTTON_X, TIMER_ACTION_BUTTON_Y, 80,
                               TIMER_ACTION_BUTTON_HEIGHT, 6,
                               BUTTON_COLORS[buttonColorIndex]);
-  renderTarget->drawRoundRect(8, TIMER_ACTION_BUTTON_Y, 80,
+  renderTarget->drawRoundRect(TIMER_ACTION_BUTTON_X, TIMER_ACTION_BUTTON_Y, 80,
                               TIMER_ACTION_BUTTON_HEIGHT, 6, 0x4208);
   renderTarget->setTextDatum(MC_DATUM);
   renderTarget->setTextColor(TFT_WHITE, BUTTON_COLORS[buttonColorIndex]);
   const int16_t centerY =
       TIMER_ACTION_BUTTON_Y + TIMER_ACTION_BUTTON_HEIGHT / 2;
-  renderTarget->drawString(label, 48, centerY, 2);
+  renderTarget->drawString(label, TIMER_CENTER_X, centerY, 2);
 }
 
 // Render timer controls, or replace the panel with the pulsing expiry screen.
@@ -1052,13 +1064,13 @@ void drawTimerPanel(uint32_t now) {
   renderTarget->setTextColor(TFT_CYAN, 0x0841);
   switch (timerState) {
     case TimerState::Ready:
-      renderTarget->drawString("SET TIMER", 48, 25, 1);
+      renderTarget->drawString("SET TIMER", TIMER_CENTER_X, 25, 1);
       break;
     case TimerState::Running:
-      renderTarget->drawString("RUNNING", 48, 25, 1);
+      renderTarget->drawString("RUNNING", TIMER_CENTER_X, 25, 1);
       break;
     case TimerState::Paused:
-      renderTarget->drawString("PAUSED", 48, 25, 1);
+      renderTarget->drawString("PAUSED", TIMER_CENTER_X, 25, 1);
       break;
     case TimerState::Expired:
       return;
@@ -1081,7 +1093,7 @@ void drawTimerPanel(uint32_t now) {
              static_cast<unsigned long>(remainingSeconds));
 #if defined(BOARD_WIDE_UI)
     renderTarget->setTextSize(1);
-    renderTarget->drawString(seconds, 48, TIMER_COUNTDOWN_Y, 2);
+    renderTarget->drawString(seconds, TIMER_CENTER_X, TIMER_COUNTDOWN_Y, 2);
 #else
     renderTarget->setTextSize(3);
     renderTarget->drawString(seconds, 48, TIMER_COUNTDOWN_Y, 2);
@@ -1094,7 +1106,7 @@ void drawTimerPanel(uint32_t now) {
              static_cast<unsigned long>(remainingSeconds % 60));
 #if defined(BOARD_WIDE_UI)
     renderTarget->setTextSize(1);
-    renderTarget->drawString(countdown, 48, TIMER_COUNTDOWN_Y, 2);
+    renderTarget->drawString(countdown, TIMER_CENTER_X, TIMER_COUNTDOWN_Y, 2);
 #else
     renderTarget->setTextSize(2);
     renderTarget->drawString(countdown, 48, TIMER_COUNTDOWN_Y, 2);
@@ -1144,6 +1156,9 @@ void drawCatFrame(uint32_t now, bool pushFullFrame = false) {
                            PET_ANIMATION_HEIGHT, 0x0841);
     renderTarget->setViewport(0, PET_HEADER_HEIGHT, CAT_PANEL_WIDTH,
                               PET_ANIMATION_HEIGHT, false);
+#if defined(BOARD_FREENOVE_FNK0104S)
+    renderTarget->setOrigin((CAT_PANEL_WIDTH - 96) / 2, 0);
+#endif
 #if defined(BOARD_JC3248W535)
     renderTarget->setPetDrawingScale(true);
 #endif
@@ -1709,17 +1724,49 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
                                                    : streamStation)
                         : streamTitle;
 #if defined(BOARD_WIDE_UI)
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (mp3Mode) {
+    const String folderLabel =
+        String("DIR: ") + (mp3Path[0] ? mp3PlayingDirectory : mp3Directory);
+    drawButton(left + 8, top + 26, UI_WIDTH - 16, 23,
+               fittedText(folderLabel, UI_WIDTH - 32, 2), PANEL_LIGHT,
+               TFT_WHITE, 2, false);
+    displayedHomeTitleFirst = "";
+    if (subtitle == "Playing MP3") subtitle = "";
+  }
+#endif
   const TwoLineText titleLines =
-      wrappedText(subtitle, UI_WIDTH - 14, 2, 3);
-  drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 8,
-                    top + 29, TL_DATUM, 2, TEXT_MUTED);
-  displayedHomeTitleFirst = titleLines.first;
-  drawHomeTextField(displayedHomeTitleSecond, titleLines.second, left + 8,
+      wrappedText(subtitle, UI_WIDTH - 14, 2,
+#if defined(BOARD_FREENOVE_FNK0104S)
+                  mp3Mode ? 2 : 3
+#else
+                  3
+#endif
+      );
+  const String secondLine =
+#if defined(BOARD_FREENOVE_FNK0104S)
+      mp3Mode ? titleLines.first :
+#endif
+      titleLines.second;
+  const String thirdLine =
+#if defined(BOARD_FREENOVE_FNK0104S)
+      mp3Mode ? titleLines.second :
+#endif
+      titleLines.third;
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (!mp3Mode)
+#endif
+  {
+    drawHomeTextField(displayedHomeTitleFirst, titleLines.first, left + 8,
+                      top + 29, TL_DATUM, 2, TEXT_MUTED);
+    displayedHomeTitleFirst = titleLines.first;
+  }
+  drawHomeTextField(displayedHomeTitleSecond, secondLine, left + 8,
                     top + 51, TL_DATUM, 2, TEXT_MUTED);
-  displayedHomeTitleSecond = titleLines.second;
-  drawHomeTextField(displayedHomeTitleThird, titleLines.third, left + 8,
+  displayedHomeTitleSecond = secondLine;
+  drawHomeTextField(displayedHomeTitleThird, thirdLine, left + 8,
                     top + 73, TL_DATUM, 2, TEXT_MUTED);
-  displayedHomeTitleThird = titleLines.third;
+  displayedHomeTitleThird = thirdLine;
   drawHomeTextField(displayedHomeCodec, codecName, left + 8, top + 100,
                     TL_DATUM, 1, TEXT_MUTED);
 #else
@@ -1831,7 +1878,7 @@ void handleTimerTouch(int16_t x, int16_t y, uint32_t now) {
                          TIMER_DECREASE_BUTTON_Y, TIMER_ADJUST_BUTTON_WIDTH,
                          TIMER_ADJUST_BUTTON_HEIGHT)) {
     changeTimerDuration(-10);
-  } else if (pointInRect(x, y, 8, TIMER_ACTION_BUTTON_Y, 80,
+  } else if (pointInRect(x, y, TIMER_ACTION_BUTTON_X, TIMER_ACTION_BUTTON_Y, 80,
                          TIMER_ACTION_BUTTON_HEIGHT)) {
     if (timerState == TimerState::Running ||
         timerState == TimerState::Expired) {
@@ -3935,6 +3982,10 @@ void handleHomeTouch(int16_t x, int16_t y) {
     return;
   }
   if (mp3Mode && pointInRect(x, y, UI_LEFT, 35, UI_WIDTH, 110)) {
+    if (mp3Path[0]) {
+      strlcpy(mp3Directory, mp3PlayingDirectory, sizeof(mp3Directory));
+      mp3Page = 0;
+    }
     openMp3Browser();
     return;
   }

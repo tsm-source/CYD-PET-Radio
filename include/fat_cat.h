@@ -5,7 +5,7 @@
 
 #include "pet_animation.h"
 
-#if defined(BOARD_JC3248W535)
+#if defined(BOARD_JC3248W535) || defined(BOARD_FREENOVE_FNK0104S)
 constexpr int16_t FAT_CAT_PANEL_WIDTH = 128;
 #else
 constexpr int16_t FAT_CAT_PANEL_WIDTH = 96;
