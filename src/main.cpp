@@ -31,6 +31,10 @@
 #include "fat_cat.h"
 #include "pets.h"
 #include "default_playlist.h"
+#if defined(BOARD_FREENOVE_FNK0104S)
+#include "sd_music.h"
+#include "sd_usb.h"
+#endif
 
 namespace {
 
@@ -241,7 +245,10 @@ enum class Screen : uint8_t {
   Wifi,
   Stations,
   StationEditor,
-  Keyboard
+  Keyboard,
+#if defined(BOARD_FREENOVE_FNK0104S)
+  Mp3Browser,
+#endif
 };
 
 enum class KeyboardTarget : uint8_t {
@@ -373,6 +380,9 @@ String displayedHomeTitleSecond;
 String displayedHomeTitleThird;
 String displayedHomeCodec;
 String displayedHomeBitrate;
+#if defined(BOARD_FREENOVE_FNK0104S)
+String displayedHomeMp3Time;
+#endif
 String statusMessage = "Set up Wi-Fi";
 
 bool touchHeld = false;
@@ -382,6 +392,25 @@ bool wifiConnecting = false;
 bool playWhenConnected = false;
 bool streamActive = false;
 bool streamRestartPending = false;
+#if defined(BOARD_FREENOVE_FNK0104S)
+bool mp3Mode = false;
+bool mp3Paused = false;
+bool mp3Ended = false;
+char mp3Directory[sdMusic::PATH_SIZE] = "/";
+char mp3PlayingDirectory[sdMusic::PATH_SIZE] = "/";
+char mp3Path[sdMusic::PATH_SIZE] = "";
+sdMusic::Entry mp3Entries[sdMusic::PAGE_SIZE]{};
+uint32_t mp3Page = 0;
+uint8_t mp3EntryCount = 0;
+bool mp3HasNext = false;
+bool mp3CardReady = false;
+String mp3BrowserMessage;
+uint8_t mp3FormatConfirmation = 0;
+bool mp3Formatting = false;
+bool mp3UsbActive = false;
+bool mp3UsbExitConfirmation = false;
+bool mp3UsbEjected = false;
+#endif
 bool showWifiPassword = false;
 bool deleteConfirmation = false;
 bool stationEditorIsNew = false;
@@ -442,6 +471,11 @@ void setStatus(const String &message);
 void updateScreenLayout();
 uint8_t stationPageCount();
 void showStationPageFor(uint8_t index);
+#if defined(BOARD_FREENOVE_FNK0104S)
+bool startMp3(const char *path);
+void moveMp3Track(bool next);
+void openMp3Browser();
+#endif
 
 bool timerModeActive() { return timerState != TimerState::Inactive; }
 
@@ -636,6 +670,11 @@ void exitTimerMode(uint32_t now) {
   petTransition = PetTransition::Entering;
   petTransitionStartedAt = now;
   if (resumeMusic) {
+#if defined(BOARD_FREENOVE_FNK0104S)
+    if (mp3Mode) {
+      startMp3(mp3Path);
+    } else
+#endif
     if (WiFi.status() == WL_CONNECTED) {
       startStream();
     } else if (!wifiSsid.isEmpty()) {
@@ -679,6 +718,17 @@ void expireTimer(uint32_t now) {
   stopMusicForTimer();
   timerState = TimerState::Expired;
   timerExpiredAt = now;
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (volume > 0) {
+    if (!es8311SetSampleRate(16000)) {
+      Serial.println("ERROR: could not configure ES8311 for timer alarm.");
+      setStatus("Timer finished; alarm audio unavailable");
+      markUiDirty();
+      return;
+    }
+    codecSampleRate = 16000;
+  }
+#endif
   if (!startTimerAlarm(radioI2sPort(), volume) && volume > 0) {
     setStatus("Timer finished; alarm audio unavailable");
   } else {
@@ -1486,6 +1536,38 @@ void drawHomeTop(int16_t originX, int16_t originY);
 void drawHomeMetadata(int16_t originX, int16_t originY);
 void drawHomeBitrate(const String &bitrateText, int16_t originX,
                      int16_t originY);
+void drawHomeTextField(const String &previousText, const String &text,
+                       int16_t x, int16_t y, uint8_t datum, uint8_t font,
+                       uint16_t color);
+
+#if defined(BOARD_FREENOVE_FNK0104S)
+String mp3TimeText() {
+  if (!mp3Mode || (!streamActive && !mp3Paused)) return "";
+  const uint32_t elapsed = radioAudio.getAudioCurrentTime();
+  const uint32_t duration = radioAudio.getAudioFileDuration();
+  char elapsedText[16];
+  char durationText[16];
+  snprintf(elapsedText, sizeof(elapsedText), "%02lu:%02lu",
+           static_cast<unsigned long>(elapsed / 60),
+           static_cast<unsigned long>(elapsed % 60));
+  if (duration == 0) {
+    strlcpy(durationText, "--:--", sizeof(durationText));
+  } else {
+    snprintf(durationText, sizeof(durationText), "%02lu:%02lu",
+             static_cast<unsigned long>(duration / 60),
+             static_cast<unsigned long>(duration % 60));
+  }
+  return String(elapsedText) + " / " + durationText;
+}
+
+void drawHomeMp3Time(int16_t originX, int16_t originY) {
+  const String timeText = fittedText(mp3TimeText(), UI_WIDTH - 140, 1);
+  drawHomeTextField(displayedHomeMp3Time, timeText,
+                    UI_LEFT + UI_WIDTH / 2 - originX, 140 - originY,
+                    TC_DATUM, 1, TEXT_MUTED);
+  displayedHomeMp3Time = timeText;
+}
+#endif
 
 void drawHomeTextField(const String &previousText, const String &text,
                        int16_t x, int16_t y, uint8_t datum, uint8_t font,
@@ -1567,7 +1649,14 @@ void drawHomeTop(int16_t originX, int16_t originY) {
   display.setTextDatum(TR_DATUM);
   display.setTextColor(primaryTextColor(), backgroundColor);
 #if defined(BOARD_WIDE_UI)
+#if defined(BOARD_FREENOVE_FNK0104S)
+  display.drawString(clockText, UI_LEFT + UI_WIDTH - 72 - originX,
+                     4 - originY, 2);
+  drawButton(UI_LEFT + UI_WIDTH - 66 - originX, 1 - originY, 66, 29,
+             mp3Mode ? "RADIO" : "MP3", PANEL_LIGHT, TFT_WHITE, 1, false);
+#else
   display.drawString(clockText, UI_LEFT + UI_WIDTH, 4, 2);
+#endif
 #else
   display.drawString(clockText, UI_LEFT + UI_WIDTH - originX,
                      2 - originY, 1);
@@ -1582,7 +1671,11 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
 #else
   const int16_t top = 36 - originY;
 #endif
-  const bool connected = WiFi.status() == WL_CONNECTED;
+  const bool connected = WiFi.status() == WL_CONNECTED
+#if defined(BOARD_FREENOVE_FNK0104S)
+                         || mp3Mode
+#endif
+      ;
   const int codecId = connected && streamActive ? radioCodec() : 0;
   const uint32_t bitrateKbps =
       connected && streamActive ? (radioBitRate() + 500) / 1000 : 0;
@@ -1596,6 +1689,10 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
   display.setTextDatum(TL_DATUM);
   display.setTextColor(primaryTextColor(), backgroundColor);
   const String stationName =
+#if defined(BOARD_FREENOVE_FNK0104S)
+      mp3Mode ? (mp3Path[0] ? String(strrchr(mp3Path, '/') + 1) : "SD MP3")
+              :
+#endif
       stationCount == 0 ? "No stations" : stations[selectedStation].name;
   const String fittedStationName =
       fittedText(stationName, UI_WIDTH - 14, 2);
@@ -1641,6 +1738,9 @@ void drawHomeMetadata(int16_t originX, int16_t originY) {
   const String bitrateText =
       bitrateKbps == 0 ? "-- kbit/s" : String(bitrateKbps) + " kbit/s";
   drawHomeBitrate(bitrateText, originX, originY);
+#if defined(BOARD_FREENOVE_FNK0104S)
+  drawHomeMp3Time(originX, originY);
+#endif
 }
 
 void drawHomeBitrate(const String &bitrateText, int16_t originX,
@@ -1658,13 +1758,20 @@ void drawHomeBitrate(const String &bitrateText, int16_t originX,
 }
 
 void refreshHomeBitrate() {
-  const bool connected = WiFi.status() == WL_CONNECTED;
+  const bool connected = WiFi.status() == WL_CONNECTED
+#if defined(BOARD_FREENOVE_FNK0104S)
+                         || mp3Mode
+#endif
+      ;
   const uint32_t bitrateKbps =
       connected && streamActive ? (radioBitRate() + 500) / 1000 : 0;
   const String bitrateText =
       bitrateKbps == 0 ? "-- kbit/s" : String(bitrateKbps) + " kbit/s";
   renderTarget = &display;
   drawHomeBitrate(bitrateText, 0, 0);
+#if defined(BOARD_FREENOVE_FNK0104S)
+  drawHomeMp3Time(0, 0);
+#endif
   homeBitrateDirty = false;
   renderTarget = &display;
 }
@@ -2185,6 +2292,83 @@ void drawStations() {
 #endif
 }
 
+#if defined(BOARD_FREENOVE_FNK0104S)
+void drawMp3Browser() {
+  drawPanelHeader("SD MP3 FILES");
+  if (mp3UsbActive) {
+    drawText("USB drive is active", UI_LEFT, 60, 2, primaryTextColor());
+    drawText("Eject the drive safely on your PC", UI_LEFT, 95, 2, ERROR_COLOUR);
+    drawText(mp3UsbEjected ? "PC reports drive ejected"
+                           : "before returning to the player.",
+             UI_LEFT, 125, 2, TEXT_MUTED);
+    if (!mp3BrowserMessage.isEmpty()) {
+      drawText(fittedText(mp3BrowserMessage, UI_WIDTH, 1), UI_LEFT, 190, 1,
+               ERROR_COLOUR);
+    }
+    if (mp3UsbExitConfirmation) {
+      drawText("Did you safely eject it on the PC?", UI_LEFT, 160, 2,
+               ERROR_COLOUR);
+      drawButton(UI_LEFT, 220, 190, 48, "CANCEL", PANEL_LIGHT, TFT_WHITE, 2,
+                 false);
+      drawButton(UI_LEFT + 210, 220, UI_WIDTH - 210, 48, "YES, RETURN",
+                 ACCENT, TFT_WHITE, 2, false);
+    } else {
+      drawButton(UI_LEFT, 220, UI_WIDTH, 48, "RETURN TO PLAYER", PANEL_LIGHT,
+                 TFT_WHITE, 2, false);
+    }
+    return;
+  }
+  drawMenuBackButton();
+  if (mp3Formatting) {
+    drawText("Formatting SD card as FAT32...", UI_LEFT, 80, 2, TEXT_MUTED);
+    drawText("Do not remove the card or power.", UI_LEFT, 115, 2, ERROR_COLOUR);
+    return;
+  }
+  if (mp3FormatConfirmation) {
+    drawText("FORMAT SD CARD AS FAT32?", UI_LEFT, 60, 2, ERROR_COLOUR);
+    drawText("ALL DATA WILL BE LOST!", UI_LEFT, 95, 2, ERROR_COLOUR);
+    drawText(mp3FormatConfirmation == 1 ? "Confirm to continue"
+                                        : "Final confirmation: erase card",
+             UI_LEFT, 135, 2, primaryTextColor());
+    drawButton(UI_LEFT, 200, 190, 48, "CANCEL", PANEL_LIGHT, TFT_WHITE, 2,
+               false);
+    drawButton(UI_LEFT + 210, 200, UI_WIDTH - 210, 48,
+               mp3FormatConfirmation == 1 ? "CONTINUE" : "ERASE SD",
+               ERROR_COLOUR, TFT_WHITE, 2, false);
+    return;
+  }
+  if (!mp3CardReady) {
+    drawText(fittedText(mp3BrowserMessage, UI_WIDTH, 2), UI_LEFT, 80, 2,
+             ERROR_COLOUR);
+  }
+  drawText(fittedText(mp3Directory, UI_WIDTH - 8, 1), UI_LEFT, 35, 1,
+           TEXT_MUTED);
+  for (uint8_t row = 0; row < mp3EntryCount; ++row) {
+    const String label = String(mp3Entries[row].directory ? "[DIR] " : "") +
+                         mp3Entries[row].name;
+    drawButton(UI_LEFT, 50 + row * 49, UI_WIDTH, 43,
+               fittedText(label, UI_WIDTH - 16, 2), PANEL_LIGHT, TFT_WHITE, 2,
+               false);
+  }
+  if (mp3CardReady && mp3EntryCount == 0) {
+    drawText("No folders or MP3 files", UI_LEFT, 80, 2, TEXT_MUTED);
+  }
+  if (mp3CardReady && !mp3BrowserMessage.isEmpty()) {
+    drawText(fittedText(mp3BrowserMessage, UI_WIDTH, 1), UI_LEFT, 245, 1,
+             ERROR_COLOUR);
+  }
+  drawButton(UI_LEFT, 263, 50, 42, "<", PANEL_LIGHT, TFT_WHITE, 2, false);
+  drawButton(UI_LEFT + 56, 263, 50, 42, ">", PANEL_LIGHT, TFT_WHITE, 2,
+             false);
+  drawButton(UI_LEFT + 112, 263, 70, 42, "UP", PANEL_LIGHT, TFT_WHITE, 2,
+             false);
+  drawButton(UI_LEFT + 188, 263, 100, 42, "USB", PANEL_LIGHT, TFT_WHITE, 2,
+             false);
+  drawButton(UI_LEFT + 294, 263, UI_WIDTH - 294, 42, "FORMAT", ERROR_COLOUR,
+             TFT_WHITE, 2, false);
+}
+#endif
+
 // Draw editable station fields and save/back actions.
 void drawStationEditor() {
   TFT_eSPI &display = *renderTarget;
@@ -2375,6 +2559,11 @@ void renderScreen() {
     case Screen::Keyboard:
       drawKeyboard();
       break;
+#if defined(BOARD_FREENOVE_FNK0104S)
+    case Screen::Mp3Browser:
+      drawMp3Browser();
+      break;
+#endif
   }
   if (currentScreen == Screen::Home) {
     renderTarget->resetViewport();
@@ -3178,8 +3367,81 @@ void setAudioAmpEnabled(bool enabled) {
                     : "GPIO 4 amplifier disabled");
 }
 
+#if defined(BOARD_FREENOVE_FNK0104S)
+  bool startMp3(const char *path) {
+    if (!path[0]) {
+      setStatus("Select an MP3 file");
+      return false;
+    }
+    if (timerState == TimerState::Expired ||
+        (timerState == TimerState::Running &&
+         timerRemainingMs(millis()) <= TIMER_MUSIC_CUTOFF_MS)) {
+      setStatus("Timer: music stopped");
+      return false;
+    }
+    char selected[sdMusic::PATH_SIZE];
+    strlcpy(selected, path, sizeof(selected));
+    stopRadioSong();
+    streamActive = false;
+    mp3Paused = false;
+    mp3Ended = false;
+    streamRestartPending = false;
+    streamTitle = "";
+    streamStation = "";
+    if (!radioAudio.connecttoFS(SD_MMC, selected)) {
+      Serial.printf("ERROR: could not play MP3: %s\n", selected);
+      setStatus("Could not play MP3");
+      return false;
+    }
+    strlcpy(mp3Path, selected, sizeof(mp3Path));
+    const char *separator = strrchr(mp3Path, '/');
+    const size_t length = separator - mp3Path;
+    if (length == 0) {
+      strlcpy(mp3PlayingDirectory, "/", sizeof(mp3PlayingDirectory));
+    } else {
+      memcpy(mp3PlayingDirectory, mp3Path, length);
+      mp3PlayingDirectory[length] = '\0';
+    }
+    streamActive = true;
+    setStatus("Playing MP3");
+    return true;
+  }
+
+  void moveMp3Track(bool next) {
+    char path[sdMusic::PATH_SIZE];
+    if (!sdMusic::adjacentTrack(mp3PlayingDirectory, mp3Path, next, path,
+                                sizeof(path))) {
+      setStatus("No MP3 files in folder");
+      return;
+    }
+    startMp3(path);
+  }
+
+  void openMp3Browser() {
+    if (!streamActive && !mp3Paused) sdMusic::unmount();
+    mp3CardReady = sdMusic::mount();
+    mp3EntryCount = 0;
+    mp3HasNext = false;
+    mp3BrowserMessage = "";
+    if (!mp3CardReady) {
+      mp3BrowserMessage = "SD unavailable - use FAT32";
+      setStatus(mp3BrowserMessage);
+    } else if (!sdMusic::readPage(mp3Directory, mp3Page, mp3Entries,
+                                  mp3EntryCount, mp3HasNext)) {
+      mp3CardReady = false;
+      mp3BrowserMessage = "Could not read SD folder";
+      setStatus(mp3BrowserMessage);
+    }
+    currentScreen = Screen::Mp3Browser;
+    markUiDirty();
+  }
+  #endif
+
 // Restart the selected stream after checking timer and Wi-Fi constraints.
 void startStream() {
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (mp3Mode) return;
+#endif
   if (stationCount == 0) {
     setStatus("No stations available");
     return;
@@ -3226,6 +3488,15 @@ void selectStation(uint8_t index) {
   if (index >= stationCount) {
     return;
   }
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (mp3Mode) {
+    stopRadioSong();
+    streamActive = false;
+    mp3Mode = false;
+    mp3Paused = false;
+    mp3Ended = false;
+  }
+#endif
   selectedStation = index;
   streamTitle = "";
   streamStation = "";
@@ -3248,8 +3519,13 @@ void beginWifiConnection() {
     setStatus("Enter an SSID first");
     return;
   }
-  stopRadioSong();
-  streamActive = false;
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (!mp3Mode)
+#endif
+  {
+    stopRadioSong();
+    streamActive = false;
+  }
   startWifiConnection();
 }
 
@@ -3323,9 +3599,15 @@ void updateNetwork() {
       wifiConnecting = false;
       wifiDisconnectReason = 0;
       configTzTime(BERLIN_TIMEZONE, "pool.ntp.org", "time.google.com");
+#if defined(BOARD_FREENOVE_FNK0104S)
+      if (!mp3Mode)
+#endif
       setStatus("Wi-Fi connected");
       if (playWhenConnected || connectionRestored) {
         playWhenConnected = false;
+#if defined(BOARD_FREENOVE_FNK0104S)
+        if (!mp3Mode)
+#endif
         startStream();
       }
     }
@@ -3633,13 +3915,60 @@ void adjustDisplayBrightnessFromTouch(int16_t x) {
 // Handle playback navigation and controls on the home screen.
 void handleHomeTouch(int16_t x, int16_t y) {
 #if defined(BOARD_WIDE_UI)
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (pointInRect(x, y, UI_LEFT + UI_WIDTH - 66, 0, 66, 31)) {
+    stopRadioSong();
+    streamActive = false;
+    streamRestartPending = false;
+    mp3Paused = false;
+    mp3Ended = false;
+    streamTitle = "";
+    streamStation = "";
+    mp3Mode = !mp3Mode;
+    if (mp3Mode) {
+      setStatus("Select an MP3 file");
+      openMp3Browser();
+    } else {
+      startStream();
+    }
+    markUiDirty();
+    return;
+  }
+  if (mp3Mode && pointInRect(x, y, UI_LEFT, 35, UI_WIDTH, 110)) {
+    openMp3Browser();
+    return;
+  }
+#endif
   if (pointInRect(x, y, UI_LEFT + HOME_PREVIOUS_X, HOME_PLAYBACK_Y,
                   HOME_PREVIOUS_WIDTH, HOME_PLAYBACK_HEIGHT)) {
+#if defined(BOARD_FREENOVE_FNK0104S)
+    if (mp3Mode) {
+      moveMp3Track(false);
+    } else
+#endif
     if (stationCount > 0) {
       selectStation((selectedStation + stationCount - 1) % stationCount);
     }
   } else if (pointInRect(x, y, UI_LEFT + HOME_PLAY_X, HOME_PLAYBACK_Y,
                          HOME_PLAY_WIDTH, HOME_PLAYBACK_HEIGHT)) {
+#if defined(BOARD_FREENOVE_FNK0104S)
+    if (mp3Mode) {
+      if (streamActive || mp3Paused) {
+        if (radioAudio.pauseResume()) {
+          mp3Paused = !mp3Paused;
+          streamActive = !mp3Paused;
+          setStatus(mp3Paused ? "Paused" : "Playing MP3");
+        } else {
+          Serial.println("ERROR: MP3 pause/resume failed.");
+          setStatus("MP3 pause/resume failed");
+        }
+      } else if (mp3Path[0]) {
+        startMp3(mp3Path);
+      } else {
+        openMp3Browser();
+      }
+    } else
+#endif
     if (streamActive) {
       stopRadioSong();
       streamActive = false;
@@ -3649,6 +3978,11 @@ void handleHomeTouch(int16_t x, int16_t y) {
     }
   } else if (pointInRect(x, y, UI_LEFT + HOME_NEXT_X, HOME_PLAYBACK_Y,
                          HOME_NEXT_WIDTH, HOME_PLAYBACK_HEIGHT)) {
+#if defined(BOARD_FREENOVE_FNK0104S)
+    if (mp3Mode) {
+      moveMp3Track(true);
+    } else
+#endif
     if (stationCount > 0) {
       selectStation((selectedStation + 1) % stationCount);
     }
@@ -3829,6 +4163,128 @@ void handleStationTouch(int16_t x, int16_t y) {
   markUiDirty();
 #endif
 }
+
+#if defined(BOARD_FREENOVE_FNK0104S)
+void handleMp3BrowserTouch(int16_t x, int16_t y) {
+  if (mp3UsbActive) {
+    if (mp3UsbExitConfirmation) {
+      if (pointInRect(x, y, UI_LEFT, 220, 190, 48)) {
+        mp3UsbExitConfirmation = false;
+      } else if (pointInRect(x, y, UI_LEFT + 210, 220, UI_WIDTH - 210, 48)) {
+        if (sdUsb::stop()) {
+          mp3UsbActive = false;
+          mp3UsbExitConfirmation = false;
+          strlcpy(mp3Directory, "/", sizeof(mp3Directory));
+          mp3Page = 0;
+          openMp3Browser();
+        } else {
+          mp3BrowserMessage = "Could not stop USB drive";
+          setStatus(mp3BrowserMessage);
+        }
+      }
+    } else if (pointInRect(x, y, UI_LEFT, 220, UI_WIDTH, 48)) {
+      mp3UsbExitConfirmation = true;
+    }
+  } else if (mp3FormatConfirmation) {
+    if (pointOnMenuBackButton(x, y) ||
+        pointInRect(x, y, UI_LEFT, 200, 190, 48)) {
+      mp3FormatConfirmation = 0;
+    } else if (pointInRect(x, y, UI_LEFT + 210, 200, UI_WIDTH - 210, 48)) {
+      if (mp3FormatConfirmation == 1) {
+        mp3FormatConfirmation = 2;
+      } else {
+        mp3FormatConfirmation = 0;
+        stopRadioSong();
+        streamActive = false;
+        mp3Paused = false;
+        mp3Path[0] = '\0';
+        setStatus("Formatting SD...");
+        mp3Formatting = true;
+        renderScreen();
+        mp3CardReady = sdMusic::formatFat32();
+        mp3Formatting = false;
+        strlcpy(mp3Directory, "/", sizeof(mp3Directory));
+        mp3Page = 0;
+        if (mp3CardReady) {
+          setStatus("SD formatted as FAT32");
+          openMp3Browser();
+          if (mp3CardReady) mp3BrowserMessage = "SD formatted as FAT32";
+        } else {
+          mp3EntryCount = 0;
+          mp3HasNext = false;
+          mp3BrowserMessage = "Format failed; data may be lost";
+          setStatus(mp3BrowserMessage);
+        }
+      }
+    }
+  } else if (pointOnMenuBackButton(x, y)) {
+    currentScreen = Screen::Home;
+  } else if (pointInRect(x, y, UI_LEFT, 263, 50, 42)) {
+    if (mp3Page > 0) {
+      --mp3Page;
+      openMp3Browser();
+    }
+  } else if (pointInRect(x, y, UI_LEFT + 56, 263, 50, 42)) {
+    if (mp3HasNext) {
+      ++mp3Page;
+      openMp3Browser();
+    }
+  } else if (pointInRect(x, y, UI_LEFT + 112, 263, 70, 42)) {
+    char *slash = strrchr(mp3Directory, '/');
+    if (slash != mp3Directory) *slash = '\0';
+    else mp3Directory[1] = '\0';
+    mp3Page = 0;
+    openMp3Browser();
+  } else if (pointInRect(x, y, UI_LEFT + 188, 263, 100, 42)) {
+    if (!mp3CardReady) {
+      mp3BrowserMessage = "SD unavailable - use FAT32";
+    } else {
+      stopRadioSong();
+      streamActive = false;
+      mp3Paused = false;
+      mp3Ended = false;
+      mp3Path[0] = '\0';
+      timerShouldResumeMusic = false;
+      sdMusic::unmount();
+      if (sdUsb::start()) {
+        mp3UsbActive = true;
+        mp3UsbEjected = false;
+        mp3UsbExitConfirmation = false;
+        mp3BrowserMessage = "";
+      } else {
+        openMp3Browser();
+        mp3BrowserMessage = "Could not start USB drive";
+        setStatus(mp3BrowserMessage);
+      }
+    }
+  } else if (pointInRect(x, y, UI_LEFT + 294, 263, UI_WIDTH - 294, 42)) {
+    mp3FormatConfirmation = 1;
+  } else {
+    for (uint8_t row = 0; row < mp3EntryCount; ++row) {
+      if (!pointInRect(x, y, UI_LEFT, 50 + row * 49, UI_WIDTH, 43)) continue;
+      char path[sdMusic::PATH_SIZE];
+      const int length = snprintf(path, sizeof(path), "%s%s%s", mp3Directory,
+                                  strcmp(mp3Directory, "/") == 0 ? "" : "/",
+                                  mp3Entries[row].name);
+      if (length < 0 || static_cast<size_t>(length) >= sizeof(path)) {
+        Serial.println("ERROR: SD path exceeds 255 bytes.");
+        setStatus("SD path too long");
+        mp3BrowserMessage = statusMessage;
+      } else if (mp3Entries[row].directory) {
+        strlcpy(mp3Directory, path, sizeof(mp3Directory));
+        mp3Page = 0;
+        openMp3Browser();
+      } else if (startMp3(path)) {
+        currentScreen = Screen::Home;
+      } else {
+        mp3BrowserMessage = statusMessage;
+      }
+      break;
+    }
+  }
+  markUiDirty();
+}
+#endif
 
 // Dispatch a calibrated touch to the active screen and its controls.
 void handleTouch(int16_t x, int16_t y) {
@@ -4092,12 +4548,23 @@ void handleTouch(int16_t x, int16_t y) {
     case Screen::Keyboard:
       handleKeyboardTouch(x, y);
       break;
+#if defined(BOARD_FREENOVE_FNK0104S)
+    case Screen::Mp3Browser:
+      handleMp3BrowserTouch(x, y);
+      break;
+#endif
   }
 }
 
 }  // namespace
 
 void audio_info(const char *) {}
+
+#if defined(BOARD_FREENOVE_FNK0104S)
+void audio_eof_mp3(const char *) {
+  if (mp3Mode && streamActive) mp3Ended = true;
+}
+#endif
 
 // Audio-library callback for the station name currently being decoded.
 void audio_showstation(const char *info) {
@@ -4382,7 +4849,11 @@ void loop() {
   radioAudio.loop();
 #if defined(BOARD_FREENOVE_FNK0104B) || defined(BOARD_FREENOVE_FNK0104S)
   const uint32_t streamSampleRate = radioAudio.getSampleRate();
-  if (streamSampleRate != 0 && streamSampleRate != codecSampleRate) {
+  if (streamSampleRate != 0 && streamSampleRate != codecSampleRate
+#if defined(BOARD_FREENOVE_FNK0104S)
+      && timerState != TimerState::Expired
+#endif
+  ) {
     codecSampleRate = streamSampleRate;
     if (!es8311SetSampleRate(streamSampleRate)) {
       Serial.printf("WARNING: ES8311 cannot play %u Hz.\n",
@@ -4390,6 +4861,18 @@ void loop() {
     }
   }
 #endif
+#endif
+#if defined(BOARD_FREENOVE_FNK0104S)
+  if (mp3UsbActive && mp3UsbEjected != sdUsb::hostEjected()) {
+    mp3UsbEjected = sdUsb::hostEjected();
+    markUiDirty();
+  }
+  if (mp3Ended) {
+    mp3Ended = false;
+    streamActive = false;
+    moveMp3Track(true);
+    markUiDirty();
+  }
 #endif
   updateNetwork();
 
@@ -4427,15 +4910,27 @@ void loop() {
       now - lastBitrateUpdateAt >= BITRATE_UPDATE_INTERVAL_MS) {
     lastBitrateUpdateAt = now;
     const uint32_t bitrateKbps =
-        WiFi.status() == WL_CONNECTED && streamActive
+        (WiFi.status() == WL_CONNECTED
+#if defined(BOARD_FREENOVE_FNK0104S)
+         || mp3Mode
+#endif
+         ) && streamActive
             ? (radioBitRate() + 500) / 1000
             : 0;
     const int codecId =
-        WiFi.status() == WL_CONNECTED && streamActive
+        (WiFi.status() == WL_CONNECTED
+#if defined(BOARD_FREENOVE_FNK0104S)
+         || mp3Mode
+#endif
+         ) && streamActive
             ? radioCodec()
             : 0;
     if (bitrateKbps != lastDisplayedBitrateKbps ||
-        codecId != lastDisplayedCodec) {
+        codecId != lastDisplayedCodec
+#if defined(BOARD_FREENOVE_FNK0104S)
+        || fittedText(mp3TimeText(), UI_WIDTH - 140, 1) != displayedHomeMp3Time
+#endif
+    ) {
       lastDisplayedBitrateKbps = bitrateKbps;
       lastDisplayedCodec = codecId;
       homeBitrateDirty = true;

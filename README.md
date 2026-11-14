@@ -53,6 +53,50 @@ frame buffer. FT6336U touch and ES8311 audio use the same I²C and I²S pins as
 the FNK0104B. The wide-screen interface matches the JC3248W535C_I_Y layout,
 while the display, touch, and audio drivers remain board-specific.
 
+#### MP3 playback and SD card (FNK0104S only)
+
+The FNK0104S can play MP3 files from its microSD slot, including files in
+subfolders. This feature is currently available only on the FNK0104S; other
+boards retain radio-only behavior. The card must use FAT32; exFAT is not
+supported by this firmware.
+
+1. Tap **MP3** at the top right of the home screen to open the SD browser.
+2. Select a folder or MP3 file. **UP** returns to the parent folder and the
+   arrow buttons change pages. Tap the track name during playback to browse
+   again.
+3. Use play/pause and previous/next on the home screen to control playback.
+   The next MP3 in the same folder starts automatically at the end of a
+   track; after the last track, playback wraps to the first.
+4. Tap **RADIO** to return to the selected station.
+
+Files are played in the order stored in the folder, not alphabetically.
+While a track is playing or paused, the home screen shows elapsed time and
+estimated duration as `mm:ss / mm:ss`; `--:--` means the duration is not yet
+available. For variable-bitrate files, the estimated duration can change.
+
+#### Formatting the microSD card
+
+The SD browser also provides **FORMAT**, which creates a single FAT32
+partition. It requires two on-screen confirmations and **erases all data on
+the inserted card**. Formatting is never automatic; back up files first and
+do not remove power or the card while formatting. To add music after
+formatting, copy files to the card using a computer.
+
+#### Copying music over USB
+
+For USB transfer, connect the FNK0104S to the computer and tap **USB** in the
+SD browser. Playback stops and the computer gets exclusive access to the
+card as a removable drive. After copying files, safely eject the drive on the
+computer, then tap **RETURN TO PLAYER** and confirm that it was ejected.
+Do not unplug, remove the card or restart the board during a transfer.
+Transfer speed is limited by the board's USB connection; a card reader may
+be faster for large music collections.
+
+The FNK0104S uses native USB for this feature, so its serial port may change.
+If a subsequent firmware upload cannot connect, hold **BOOT**, briefly press
+and release **RST**, and release **BOOT** after about two seconds. Select the
+bootloader's serial port to flash the firmware.
+
 The FNK0114L also has an optional rear RGB LED. Open **MENU > RGB LED** to
 enable it, choose one of five colors, and optionally turn on slow pulsing.
 These controls are available only in the FNK0114L firmware; the CYD's rear LED
@@ -91,6 +135,9 @@ Checklist per board: Wi-Fi connects, a stream starts (`stream=on`, codec and
 bitrate shown), audio is audible, station change works, display and touch
 work, and the timer alarm sounds. Common code paths such as
 `radioAudio.loop()` must be serviced on every board.
+For the FNK0104S, also check SD folder navigation, MP3 playback and automatic
+next-track behavior, pause and time display, radio/MP3 switching, USB copying
+and safe eject. Test formatting only on a card explicitly approved for erasure.
 
 ## Radio controls
 
